@@ -4,6 +4,23 @@ All notable changes to the `myelin` Python SDK are documented here. Format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the
 project uses semantic versioning.
 
+## [1.3.1] — 2026-05-22
+
+First release published from the dedicated `myelinagent/Myelin-AI`
+repository. **No functional or API changes from 1.3.0** — same surface,
+same benchmarks, same dependencies. This release exists to:
+
+- Move the canonical source from the research monorepo
+  (`Skobyn/cortex-m`, where the library lived under `myelin-py/`) to a
+  dedicated clean distribution repo at `myelinagent/Myelin-AI`.
+- Re-anchor PyPI Trusted Publishing on the new repo (the publisher
+  binding was re-registered on PyPI for `myelinagent/Myelin-AI`).
+- Update `[project.urls]` to point at the new homepage / issues /
+  changelog URLs.
+
+`pip install myelin-ai==1.3.1` is byte-equivalent to `1.3.0` in terms of
+importable surface; the bump is metadata-only.
+
 ## [1.3.0] — 2026-05-22 (GitHub release only)
 
 Promotes orchestration patterns validated on PersonaMem n=589 from the
