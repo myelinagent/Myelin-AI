@@ -1,0 +1,87 @@
+name: Publish myelin-ai to PyPI
+
+# Trigger:
+#   - Pushing a tag matching myelin-v*.*.* (e.g. myelin-v1.3.0, myelin-v1.4.0)
+#   - Or a manual workflow_dispatch with target_pypi (testpypi|pypi).
+#
+# Authentication:
+#   Uses PyPI Trusted Publishing via OIDC — NO secrets stored in this repo.
+#   Bootstrap by registering the publisher at:
+#     https://pypi.org/manage/account/publishing/        (production)
+#     https://test.pypi.org/manage/account/publishing/   (TestPyPI rehearsal)
+#   Owner: myelinagent  Repository: Myelin-AI
+#   Workflow filename: release-myelin-pypi.yml
+#   Environment names: pypi, testpypi
+
+on:
+  push:
+    tags:
+      - "myelin-v*.*.*"
+  workflow_dispatch:
+    inputs:
+      target_pypi:
+        description: "Target index"
+        required: true
+        default: "testpypi"
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build twine
+      - name: Build sdist + wheel
+        run: python -m build
+      - name: Inspect metadata
+        run: twine check dist/*
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: myelin-dist
+          path: dist/*
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target_pypi == 'testpypi'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: myelin-dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+
+  publish-pypi:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/myelin-v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_pypi == 'pypi')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: myelin-dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
