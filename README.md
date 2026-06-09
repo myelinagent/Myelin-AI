@@ -1,113 +1,187 @@
-# myelin
+# myelin-ai
 
-Drop-in memory layer for AI agent harnesses. Three validated mechanisms in a
-7-method API:
-
-1. **Event-anchored bi-temporal facts** — APEX-MEM §3.1 parity. Facts
-   append-only, anchored to event provenance nodes, queryable at a point in
-   time via `search(..., as_of=t)`.
-2. **Dream-synthesis consolidation** — `consolidate()` generates dream
-   queries from your facts during idle windows, runs your LLM against them,
-   and surfaces blind spots before they cost a user a real query.
-3. **Apoptosis** — `prune()` runs a `quarantine → tombstone` state machine
-   over the substrate. Tombstoned facts are invisible to `search()` but
-   persist as an audit trail.
-
-Cross-references to the validated mechanism evidence are in
-[docs/v1-launch-story-2026-05-18.md](../docs/v1-launch-story-2026-05-18.md)
-§1.1 (P1 H044 v2), §1.2 (F-ML-2), §1.3 (P3).
-
-## Why myelin instead of Mem0 / Letta / Zep
-
-- **Forgets on purpose.** Mem0, Letta, MemGPT, APEX-MEM, and TencentDB
-  Agent Memory all monotonically accumulate. Adversarial inputs (poison,
-  contradiction stuffing, role-play overrides) silently corrupt their
-  stores. `myelin.prune()` is a principled forgetting path with an
-  auditable state machine.
-- **Counterfactual self-test.** Dream-synthesis consolidation lets the
-  system probe its own answerer with paraphrased queries during idle
-  windows. No published competitor has an equivalent loop at time of
-  writing.
-- **Drop-in, not opinionated.** No bundled answerer, no agent harness, no
-  torch dep. You bring your own LLM. Layered on top of Mem0 / Letta /
-  OpenClaw if you want their harness UX.
-
-## Install
+`pip install myelin-ai` — a drop-in memory layer for AI agents. Event-anchored
+bi-temporal facts, store-grounded dream-synthesis consolidation, and an
+apoptosis-based forgetting path that quarantines low-health memories before
+they can corrupt future answers. Zero hard dependencies in the core
+(`sqlite3` only).
 
 ```bash
-# Local editable install (this repo)
-pip install -e ./myelin-py
-
-# OR install directly from GitHub at a specific tag/branch:
-pip install "git+https://github.com/myelinagent/Myelin-AI.git@v1.2.0#subdirectory=myelin-py"
+pip install myelin-ai             # core
+pip install "myelin-ai[openai]"   # + OpenAI provider for OrchestratedAgent
+pip install "myelin-ai[google]"   # + Gemini provider for OrchestratedAgent
 ```
 
-**v1.2 is GitHub-install-only.** The `myelin` name on PyPI is taken by
-an unrelated package; the v1.3 cycle will pick a new PyPI name and
-publish there. Until then, install from this repo by tag.
+Requires Python 3.10+. The import name remains `myelin`.
 
-The core package has **zero hard dependencies** — `sqlite3` ships with
-CPython. The `[embeddings]` extra adds `sentence-transformers` + `numpy`
-for vector-backed retrieval (not wired in v1 — coming in v1.3).
+---
 
-Requires Python 3.10+.
+## What's new in 1.4.0
 
-## Quickstart 1 — add, search, see results
+Three load-bearing mechanisms that were silently no-oping in 1.3 are now
+actually wired. One new feature: store-grounded dream synthesis.
+
+| Area | 1.3 behavior | 1.4 behavior |
+|---|---|---|
+| D-MEM surprise score (`zscore_surprise`) | `z == 0` for every input — broken normalization | Z-scored against a query-independent reference; signed and discriminating |
+| Dream grader (`grade_hit`) | Substring-match against the prompt — answerer could echo and score a hit | Answer key held out of the prompt, graded against the elided key |
+| Heuristic salience novelty axis | Pinned at 0.5 cold-start neutral (no embedder wired) | Lazy sentence-transformers embedder + per-scope rolling neighbour window |
+| Dream cycle grounding | Ungrounded cloze: answerer guesses from query alone | Optional `retriever=` grounds queries against the memory store |
+| Salience reward axis | Not pluggable | New `outcome=` kwarg on `add()` |
+| Sidecar liveness | `/health` only | Adds `/metrics` for vacuous-PASS guards |
+
+**This is the first PyPI release where the substrate behaves as designed.** If
+you were on 1.3, upgrade — see the
+[migration notes](https://github.com/myelinagent/Myelin-AI/blob/main/CHANGELOG.md).
+
+---
+
+## Why `myelin-ai` instead of Mem0 / Letta / Zep
+
+- **Forgets on purpose.** Mem0, Letta, MemGPT, and similar agent-memory layers
+  all monotonically accumulate. Adversarial inputs (poison, contradiction
+  stuffing, role-play overrides) silently corrupt their stores.
+  `client.prune()` is a principled forgetting path with an auditable
+  quarantine → tombstone state machine.
+- **Counterfactual self-test.** `client.consolidate(retriever=...)` lets the
+  system probe its own answerer with held-out paraphrased queries during idle
+  windows, grounded against the actual memory store.
+- **Drop-in, not opinionated.** Zero hard deps in the core. No bundled
+  answerer, no torch dep at install. You bring your own LLM. The
+  `OrchestratedAgent` and HTTP sidecar are opt-in extras.
+
+---
+
+## Quickstart — the 1.4.0 happy path
+
+The canonical wiring: add facts with outcome signal, run a store-grounded
+dream cycle, and let apoptosis prune low-health residue.
 
 ```python
 from myelin import MemoryClient
 
-client = MemoryClient()
-client.add("Scott prefers tea.")
-client.add("Alice loves chess.")
-client.add("Scott uses Cursor for code review.")
+client = MemoryClient(
+    user_id="scott",
+    salience_mode="heuristic",       # 1.4: novelty + reward axes actually wired
+)
 
-hits = client.search("What tools does Scott use?")
-for h in hits:
+# 1.4: outcome= threads success/failure into the heuristic gate's reward axis.
+client.add(
+    "Scott prefers oolong tea.",
+    outcome={"task_succeeded": True, "user_thumbs_up": True},
+)
+client.add(
+    "Scott uses Cursor for code review.",
+    outcome={"task_succeeded": True},
+)
+client.add("Alice loves chess.")
+
+# Hot retrieval.
+for h in client.search("What does Scott drink?", top_k=3):
     print(f"{h.score:.2f}  {h.memory.content}")
 ```
 
-## Quickstart 2 — consolidate with a mock LLM
+### Store-grounded dream synthesis (the 1.4.0 marquee)
+
+```python
+# 1.4: retriever= turns the dream cycle from an ungrounded cloze into a
+# real recall test. Each held-out query is prepended with retrieved memory
+# context so the answerer must recall from the store, not guess.
+class EchoLLM:
+    def complete(self, prompt: str) -> str:
+        # Replace with your real LLM (OpenAI, Anthropic, vLLM, llama.cpp...)
+        return prompt
+
+client = MemoryClient(user_id="scott", llm_client=EchoLLM())
+
+report = client.consolidate(
+    retriever=lambda q: [r.memory.content for r in client.search(q, top_k=5)],
+)
+print(f"hit_rate={report.hit_rate:.2%}  "
+      f"facts_sampled={report.facts_sampled}  "
+      f"llm_calls={report.llm_calls}")
+```
+
+Without `retriever=`, the cycle still runs but uses the v1.3-style ungrounded
+cloze (kept for backward compat). The grader, however, is fixed in 1.4 either
+way — `grade_hit` now scores against a held-out answer key, not a substring
+of the prompt.
+
+---
+
+## Memory-aware agent (`OrchestratedAgent`, v1.3)
+
+A provider-agnostic multi-step agent. A cheap classifier (`gpt-4o-mini` by
+default) routes each question as `factual` (multi-step with `memory_search`
+tool calls) or `synthesis` (top-10 prefetch + tool available).
 
 ```python
 from myelin import MemoryClient
+from myelin.agent import OrchestratedAgent
 
-class MyLLM:
-    def complete(self, prompt: str) -> str:
-        # Plug your real LLM here (OpenAI, Anthropic, vLLM, llama.cpp).
-        # Must return a string. Any callable also works:
-        # `client = MemoryClient(llm_client=my_callable)`.
-        return prompt  # echo for demo
+client = MemoryClient(user_id="u1")
+client.add("The user prefers green tea over coffee.")
+client.add("The user is allergic to peanuts.")
 
-client = MemoryClient(llm_client=MyLLM())
-client.add("Scott prefers tea.")
-client.add("Alice loves chess.")
-
-report = client.consolidate()
-print(f"hit_rate={report.hit_rate:.2%}  "
-      f"gaps={report.gaps_surfaced}/{report.llm_calls}  "
-      f"facts_sampled={report.facts_sampled}")
+# Works against OpenAI (openai/*) or Gemini (google/*) — pick what you have.
+agent = OrchestratedAgent(client=client, model="openai/gpt-4o")
+answer = agent.answer(
+    question="What does the user prefer to drink?",
+    options="(a) coffee\n(b) green tea\n(c) matcha\n(d) water",
+    user_id="u1",
+)
+print(answer)              # → "<final_answer>(b)"
+print(agent.last_usage)    # → {"input_tokens": ..., "cost_usd": ..., ...}
 ```
 
-`consolidate()` samples healthy facts, generates dream queries
-(currently heuristic templates), runs the queries through your
-`llm_client`, and grades hits by substring match. Without an
-`llm_client` it's a no-op for the LLM step but still surfaces what
-WOULD be tested.
+The Gemini client is wired with a 30s `HttpOptions.timeout` to defend against
+the SDK's internal retry-on-disconnect hang. Pricing is overridable via
+`OrchestratedAgent.PRICE_TABLE` for cost tracking.
 
-## Quickstart 3 — prune (apoptosis) fires
+---
+
+## Salience gate — `mode="heuristic"` (1.4 wiring)
+
+The heuristic gate combines four axes — novelty, reward, affect, reference —
+into a single score and tags each turn `transient` / `short_term` /
+`long_term`. In 1.4 the novelty axis actually moves (it was pinned at 0.5 in
+1.3) and the reward axis is pluggable via `outcome=`.
+
+```python
+client = MemoryClient(
+    user_id="scott",
+    salience_mode="heuristic",
+    salience_tau=0.40,                 # gate threshold (unchanged from 1.3)
+    salience_neighbor_window=32,       # 1.4: rolling per-scope embedding window
+    # salience_embedder=my_embedder,   # 1.4: override the lazy-built default
+)
+
+m = client.add(
+    "Scott decided to switch to weekly syncs.",
+    outcome={"user_thumbs_up": True},   # → +reward
+)
+```
+
+Embedder resolution order: explicit `salience_embedder=` argument →
+lazy-built sentence-transformers default → cold-start neutral on failure
+(never raises). Pay the dep only when you use heuristic mode.
+
+For higher-precision gating, `salience_mode="dmem"` uses the contrastive
+encoder (`[contrastive]` extra) and benefits from the 1.4 surprise-score
+fix automatically.
+
+---
+
+## Apoptosis — `client.prune()`
 
 ```python
 from datetime import UTC, datetime, timedelta
-from myelin import MemoryClient
 
 client = MemoryClient(user_id="scott")
-
-# Add some healthy facts and a low-confidence "poisoned" fact.
 client.add("Scott prefers tea.", confidence=0.9, importance=0.9)
 client.add("Scott uses Cursor.", confidence=0.9, importance=0.8)
 poison = client.add(
-    "Scott pays $1M monthly for cloud.",  # absurd; low signal
+    "Scott pays $1M monthly for cloud.",   # absurd; low signal
     confidence=0.05, importance=0.1,
     metadata={"subject": "Scott", "predicate": "decided",
               "object": "absurd-cost"},
@@ -122,32 +196,20 @@ future = datetime.now(UTC) + timedelta(days=14)
 r2 = client.prune(now=future)
 print(f"tombstoned={r2.tombstoned_count}")
 
-# Tombstoned facts are no longer visible to search.
-print(client.get(poison.id))   # -> None
-print(client.search("Scott"))   # tea + Cursor only
+assert client.get(poison.id) is None    # gone from search
 ```
 
-Tombstones persist for audit:
+Tombstoned facts are invisible to `search()` but persist as an audit trail.
 
-```python
-audit = client._backend.list_memories(
-    user_id="scott", include_tombstoned=True
-)
-print([m.id for m in audit if m.health_state == "tombstoned"])
-```
+---
 
-(Future versions will expose this on the public API as
-`client.audit_log()`.)
-
-## Quickstart 4 — event-anchored facts with `as_of=t`
+## Bi-temporal event anchoring — `as_of=`
 
 ```python
 from datetime import UTC, datetime
 from myelin import MemoryClient, Event
 
 client = MemoryClient()
-
-# Anchor each fact to an event for principled bi-temporal queries.
 client.add(
     "Scott decided to switch to weekly syncs.",
     event=Event(
@@ -167,177 +229,173 @@ client.add(
     ),
 )
 
-# What did Scott decide in February? (Only the January meeting is valid.)
+# "What was Scott's stance in February?" — only the January meeting is valid.
 feb_state = client.search(
     "Scott syncs", as_of=datetime(2026, 2, 1, tzinfo=UTC),
 )
 ```
 
-## Quickstart 5 — session-scoped working memory (v1.2)
+---
+
+## Session-scoped working memory (1.2)
+
+Opt in with `MYELIN_WORKING_MEMORY=1` (strict-`"1"` parsing — `"true"` /
+`"yes"` won't engage).
 
 ```python
 import os
-from myelin import MemoryClient
-
-# Innovation B is opt-in via strict-"1".
 os.environ["MYELIN_WORKING_MEMORY"] = "1"
 
 client = MemoryClient(user_id="scott")
-SID = "convo-2026-05-21"
+SID = "convo-2026-06-09"
 
-# Stream turns into a bounded session ring (RAM only). The session is
-# auto-created on first observe() and TTL-swept later.
-t1 = client.observe("What did we agree on yesterday?",        session_id=SID)
-t2 = client.observe("You committed to a weekly review.",       session_id=SID)
-t3 = client.observe("OK, let's lock that in.",                 session_id=SID)
+t1 = client.observe("What did we agree on yesterday?", session_id=SID)
+t2 = client.observe("You committed to a weekly review.", session_id=SID)
 
-# Promote selected turns to persistent memory (the salience gate fires
-# at commit time, not at observe — NFR-B3 cost win).
-committed = client.commit([t2.turn_id, t3.turn_id], session_id=SID)
-print(f"committed {len(committed)} of 3 observed turns")
+# observe() is RAM-only. commit() runs the salience gate and persists.
+committed = client.commit([t2.turn_id], session_id=SID)
 
-# Tiered search: working_set first, then session-scoped, then long_term.
-# Hits from a higher tier auto-attend into the working set (FR-B3).
+# Tiered search across working → session → long-term.
 hits = client.search(
     "weekly review",
     session_id=SID,
     modes=("working", "session", "long_term"),
     top_k=5,
 )
-for h in hits:
-    print(f"{h.score:.2f}  {h.memory.content}")
-
-# Inspect session telemetry (read-only snapshot).
-handle = client.session(SID)
-print(f"observed={handle.n_observed}  committed={handle.n_committed}  "
-      f"working_set={len(handle.working_set_ids)}")
 ```
 
-Observe writes are **never persisted** without an explicit `commit()`
-(EC-B7). Per-session state is RAM-only — see ADR-022 for the threading
-model and the `MYELIN_*` env knobs (TTL, ring size, working-set cap,
-sweeper). `client.attend(memory_id, session_id=...)` pins a known
-memory into the working set without going through search.
+Observe-without-commit data is **never persisted**. Per-session state is
+RAM-only with a TTL sweeper.
 
-## Quickstart 6 — outcome-conditioned learning via `cite()` (v1.2)
+---
+
+## Outcome-conditioned health — `cite()` (1.2)
+
+Opt in with `MYELIN_CITE_LEARNING=1`.
 
 ```python
 import os
-from myelin import MemoryClient
-
-# Innovation A is opt-in via strict-"1".
 os.environ["MYELIN_CITE_LEARNING"] = "1"
 
 client = MemoryClient(user_id="scott")
-
-client.add("Scott prefers tea.", confidence=0.7, importance=0.7)
 m_cursor = client.add("Scott uses Cursor for code review.",
                        confidence=0.7, importance=0.7)
 
-# Agent answered a question; the answer cited m_cursor and was correct.
+# Cite the memory after using it. Correct → lifts apoptosis health.
 client.cite(m_cursor.id, answer_correct=True)
-client.cite(m_cursor.id, answer_correct=True)
+client.cite(m_cursor.id, answer_correct=False)   # incorrect → penalty
 
-# Agent answered a different question; cited m_cursor but was WRONG.
-client.cite(m_cursor.id, answer_correct=False)
-
-# When no stored memory was cite-worthy, record an abstain event so the
-# absence-of-signal feeds future apoptosis decisions.
+# When NO stored memory was cite-worthy, record an abstain event.
 client.abstain_event(query="What's Scott's middle name?")
-
-# Cite signal lifts (or penalizes) apoptosis health automatically.
-# A poisoned memory with 100 correct cites STILL quarantines on a single
-# contradiction (EC-A5 invariant, asserted at constants.py import time).
-report = client.prune()
-print(f"quarantined={report.quarantined_count}  "
-      f"retained={report.retained_count}")
 ```
 
-Defaults of the three new Memory fields (`cite_correct_count=0`,
-`cite_incorrect_count=0`, `last_cited_at=None`) make `cite()` a no-op
-for callers who don't engage it — a v1 substrate opened under v1.2
-with the flag unset produces unchanged health values. See ADR-021 for
-the weight rationale and the EC-A5 contradiction-dominance invariant.
+Contradiction-dominance invariant: a poisoned memory with 100 correct cites
+still quarantines on a single contradiction (asserted at `constants.py`
+import time).
 
-## API surface (v1.2 — 13 public methods)
+---
+
+## HTTP sidecar + `/metrics` (1.3 + 1.4)
+
+Wraps the client as JSON-over-HTTP, OpenClaw-compatible. The 1.4 addition
+is `GET /metrics` for vacuous-PASS preflight guards.
+
+```bash
+myelin-serve --host 127.0.0.1 --port 8765   # console script (1.3.1+)
+# or: python -m myelin.serve --host 127.0.0.1 --port 8765
+```
+
+```bash
+curl http://127.0.0.1:8765/health    # {"ok": true, "service": "myelin-sidecar"}
+curl http://127.0.0.1:8765/metrics   # {"tool_invocations": 0, "reset_count": 0}
+
+curl -X POST http://127.0.0.1:8765/tools/memory_store \
+  -H 'content-type: application/json' \
+  -d '{"content": "Scott uses Cursor.", "user_id": "scott"}'
+
+curl http://127.0.0.1:8765/metrics   # {"tool_invocations": 1, "reset_count": 0}
+```
+
+Loopback only by default. No auth — wrap behind a reverse proxy if exposed.
+Bench harnesses can assert `tool_invocations > 0` before treating an
+"all-PASS" result as non-vacuous.
+
+Endpoints: `/tools/memory_{search,get,store,update,forget,consolidate,prune}`,
+`/hooks/{before_agent_start,agent_end}`, `/admin/reset`, `/health`,
+`/metrics` (1.4).
+
+---
+
+## API surface
 
 ```python
+# Core CRUD
 client.add(content, *, user_id=None, metadata=None, event=None,
-           confidence=0.5, importance=0.5) -> Memory
-client.search(query, *, user_id=None, top_k=10, as_of=None) -> list[SearchResult]
+           confidence=0.5, importance=0.5, outcome=None) -> Memory        # outcome= 1.4
+client.search(query, *, user_id=None, top_k=10, as_of=None,
+              session_id=None, modes=("working","session","long_term")) -> list[SearchResult]
 client.get(memory_id) -> Memory | None
 client.update(memory_id, *, content=None, metadata=None) -> Memory
 client.delete(memory_id) -> bool
 
-client.consolidate(*, user_id=None, max_samples=32) -> ConsolidationReport
+# Consolidation + apoptosis
+client.consolidate(*, user_id=None, max_samples=32,
+                   retriever=None) -> ConsolidationReport                  # retriever= 1.4
 client.prune(*, user_id=None, now=None, caspase_window_days=7) -> ApoptosisReport
 
-# v1.2 — Innovation A (opt-in via MYELIN_CITE_LEARNING=1)
+# Outcome-conditioned learning (1.2 — opt in via MYELIN_CITE_LEARNING=1)
 client.cite(memory_id, *, answer_correct: bool) -> None
 client.abstain_event(query, *, at=None) -> None
+client.cite_telemetry() -> dict
 
-# v1.2 — Innovation B (opt-in via MYELIN_WORKING_MEMORY=1)
+# Session-scoped working memory (1.2 — opt in via MYELIN_WORKING_MEMORY=1)
 client.observe(content, *, session_id, metadata=None) -> ObservedTurn
-client.commit(turn_ids: list[str], *, session_id) -> list[Memory]
-client.attend(memory_id, *, session_id) -> None        # pin into working set
-client.session(session_id) -> SessionHandle             # read-only telemetry snapshot
+client.commit(turn_ids, *, session_id) -> list[Memory]
+client.attend(memory_id, *, session_id) -> None
+client.session(session_id) -> SessionHandle
+client.search_telemetry() -> SearchTelemetry
 
-# v1.2 — tiered search extension
-client.search(..., session_id=None,
-              modes=("working", "session", "long_term")) -> list[SearchResult]
+# Constructor (1.4 additions noted)
+MemoryClient(
+    user_id=None, backend=None, llm_client=None,
+    salience_mode="off",                # "off" | "heuristic" | "dmem"
+    salience_tau=0.40,
+    salience_require_reward=False,
+    salience_embedder=None,             # 1.4 — override default embedder
+    salience_neighbor_window=32,        # 1.4 — rolling per-scope window
+    dmem_gate=None,
+    cite_learning=None, working_memory=None,
+)
 ```
 
-## Mechanisms
+```python
+# Agent orchestration (1.3)
+from myelin.agent import OrchestratedAgent
+agent = OrchestratedAgent(client, model="openai/gpt-4o" | "google/gemini-3.5-flash")
+agent.classify(question) -> "factual" | "synthesis"
+agent.answer(question, *, options=None, user_id=None) -> str
+agent.last_usage  # {"input_tokens", "output_tokens", "cost_usd", ...}
+```
 
-The three validated mechanisms that ship in v1 are documented in detail in
-the parent repo's launch story. Brief pointers:
-
-- **§1.1 — P1 H044 v2 event-anchored facts.** Smoke verdict
-  `PASS-MARGINAL` (`gold_source_recall@10 = 0.5000` vs gate `0.4694`,
-  +3.06pp); `supersession_count` fires on 30/30 qids. Foundation
-  invariants hold: `gate_engaged=True`, image-ancestry verified.
-- **§1.2 — F-ML-2 dream-synthesis.** Vertex full-bench `PASS-AT-SCALE`
-  (jobId `7115283598420213760`): `hit_rate_mean = 0.7161`,
-  `consolidation_llm_successes = 458/465`.
-- **§1.3 — P3 apoptosis.** `abstention_precision = 1.000` vs baseline
-  `0.083` (+91.7pp). TPR-on-poison `0.985`, FPR-on-real `0.033`.
-
-myelin ports the *mechanism* into a clean, dependency-free shape. The
-cortex code (`src/cortex/...`) still owns the heavyweight evaluation
-pipeline (Vertex harness, LongMemEval bench, image-ancestry checks). The
-SDK is for callers who want the mechanism IN their agent harness without
-adopting the full eval substrate.
-
-## What's next
-
-- **v1.3 — query-intent classifier.** Route `attend` calls through a
-  lightweight intent classifier so working-set vs persistent fallback
-  weights against the *type* of query, not just yield. Mechanism-coupled
-  metric: per-intent hit-rate.
-- **v1.3 — trained-weights utility backend (Memory-R1 retry).** The
-  Phase MR1-D structural failure (2026-05-20) is a bench-side fix away
-  — once PersonaMem `run_bench` persists `retrieved_memories[]`, the
-  DeBERTa joint-head training pipeline (ADR-019/020) can run.
-- **v1.3 — LoCoMo bench unblock.** The multi-turn synthetic fixture is
-  the v1.2 bridge gate; LoCoMo is the v1.3 ship gate for Innovation B
-  lift.
-- **v1.2 — answerer-quality dream queries (still queued).** A
-  `query_generator=` hook for callers who want LLM-generated dream
-  queries (matching the cortex F-ML-2 mechanism that uses `gpt-4o-mini`
-  at `seed=42`).
-- **v1.2 — embedding-backed retrieval.** The `[embeddings]` extra is
-  reserved; v1 ships lexical-only.
+---
 
 ## Testing
 
 ```bash
-pip install pytest
-pytest myelin-py/tests/
+pip install -e ".[test]"
+pytest tests/
 ```
 
 All tests are stdlib + pytest only — no internet, no GPU, no LLM calls.
-The dream-synthesis tests use trivial mock LLMs.
+Dream-synthesis tests use trivial mock LLMs.
+
+---
+
+## Project
+
+- **Source / Issues:** https://github.com/myelinagent/Myelin-AI
+- **Changelog:** [`CHANGELOG.md`](https://github.com/myelinagent/Myelin-AI/blob/main/CHANGELOG.md)
 
 ## License
 
-MIT.
+MIT. See [`LICENSE`](https://github.com/myelinagent/Myelin-AI/blob/main/LICENSE).

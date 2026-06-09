@@ -105,6 +105,21 @@ def test_score_turn_heuristic_end_to_end():
 # -----------------------------------------------------------------
 
 
+class _DetEmbedder:
+    """Deterministic stdlib embedder so the heuristic-mode client tests stay
+    hermetic and fast — B2 wired a real embedder into the novelty axis, and
+    without injection the client would lazy-download sentence-transformers."""
+
+    def __init__(self, dim: int = 24) -> None:
+        self.dim = dim
+
+    def encode(self, text: str) -> list[float]:
+        import hashlib
+
+        d = hashlib.sha256(text.encode("utf-8")).digest()
+        return [(d[i % len(d)] / 255.0) - 0.5 for i in range(self.dim)]
+
+
 def test_client_off_mode_stores_every_turn():
     c = MemoryClient(salience_mode="off")
     try:
@@ -123,6 +138,7 @@ def test_client_heuristic_drops_low_signal_chitchat():
         salience_mode="heuristic",
         salience_tau=0.40,
         salience_require_reward=False,
+        salience_embedder=_DetEmbedder(),
     )
     try:
         # All low-signal stopword chitchat → should be dropped by tau=0.40.
@@ -140,6 +156,7 @@ def test_client_heuristic_preserves_substrate_for_kept_turns():
         salience_mode="heuristic",
         salience_tau=0.40,
         salience_require_reward=False,
+        salience_embedder=_DetEmbedder(),
     )
     try:
         # A content-dense, affect-laden turn — should clear tau=0.40.
@@ -150,6 +167,36 @@ def test_client_heuristic_preserves_substrate_for_kept_turns():
         if mem.id:  # if kept
             hits = c.search("birthday")
             assert hits
+    finally:
+        c.close()
+
+
+def test_client_heuristic_novelty_and_reward_vary_as_wired():
+    # B2 (ADR-026): the as-wired novelty axis moves with distinct turns and the
+    # reward axis moves with ``outcome=`` — the two signals that were pinned at
+    # 0.5 / 0.0 before the embedder + outcome were threaded through add().
+    c = MemoryClient(
+        salience_mode="heuristic",
+        salience_tau=0.0,  # keep every turn so the signals are observable
+        salience_embedder=_DetEmbedder(),
+    )
+    try:
+        def sal(mem):
+            md = mem.metadata or {}
+            return md.get("_salience", md)
+
+        novelties = [
+            sal(c.add(t)).get("salience_novelty")
+            for t in ["fact alpha", "fact beta", "fact gamma", "fact delta"]
+        ]
+        assert len({round(n, 6) for n in novelties}) > 1, novelties
+
+        r_none = sal(c.add("turn x")).get("salience_reward")
+        r_good = sal(
+            c.add("turn y", outcome={"task_succeeded": True, "user_thumbs_up": True})
+        ).get("salience_reward")
+        assert r_none == 0.0
+        assert r_good == 1.0
     finally:
         c.close()
 

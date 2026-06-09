@@ -4,11 +4,12 @@ The cortex F-ML-2 mechanism (`scripts/vertex/_harness.py`,
 `src/cortex/scheduler/jobs/F_ML_2_dream_synthesis.py`) does:
 
 1. Sample post-sleep T2/T3 facts that are eligible for self-test.
-2. Generate "dream queries" — paraphrased natural-language questions
-   whose ground-truth answer is the seeded fact's content.
+2. Generate "dream queries" — natural-language questions with the fact's
+   answer key HELD OUT (elided), so the answer is not in the prompt.
 3. Call the answerer (in cortex: gpt-4o-mini at seed=42) on each query.
-4. Grade hit/miss by substring match between the answerer's response
-   and the seed fact's content.
+4. Grade hit/miss by matching the answerer's response against the
+   held-out answer key — not the verbatim fact — so an echo of the
+   query cannot score a hit (it scores recall, not parroting).
 5. Return per-cycle `hit_rate`, gap count, and any newly-extracted
    facts to write back.
 
@@ -29,33 +30,116 @@ from typing import Any, Callable
 
 from myelin.types import ConsolidationReport, Memory
 
-# Heuristic templates. Each template takes the fact content and emits a
-# question whose ground-truth answer should contain the content (modulo
-# casing and minor surface variation). Designed for substring-match
-# grading; the caller's LLM answer just needs to contain the fact text.
+# Held-out query templates. Each wraps the memory content with its ANSWER
+# KEY elided (replaced by a blank), so the question never contains the
+# answer — an answerer must recall the key from the memory store, not echo
+# the prompt. This mirrors the cortex F-ML-2 grader, which scores the
+# response against a separate `expected` key rather than the whole fact.
 _QUERY_TEMPLATES: tuple[str, ...] = (
-    "What do you remember about: {fact}",
-    "Tell me what you know related to: {fact}",
-    "Recall the fact: {fact}",
+    "Fill in the blank from memory: {masked}",
+    "What is the missing detail? {masked}",
+    "Recall the elided word: {masked}",
 )
+
+# Common words that are never the salient "answer" of a fact. Kept small and
+# dependency-free; the real F-ML-2 path uses an LLM to pick the held-out span.
+_STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "of", "to", "for", "and", "or", "but", "in", "on", "at", "by", "with",
+    "as", "from", "that", "this", "these", "those", "it", "its",
+    "i", "you", "he", "she", "they", "we", "me", "him", "her", "them", "us",
+    "my", "your", "his", "their", "our",
+    "do", "does", "did", "has", "have", "had", "will", "would", "can", "could",
+    "prefers", "prefer", "likes", "like", "enjoys", "enjoy", "uses", "use",
+    "used", "wants", "want", "knows", "know", "remember", "recall", "tell",
+    "about", "related", "what", "which", "who", "when", "where", "how",
+})
+
+
+def _content_tokens(text: str) -> list[str]:
+    """Lowercased alphanumeric tokens, in order. Punctuation is a delimiter."""
+    tok: list[str] = []
+    cur: list[str] = []
+    for ch in text.lower():
+        if ch.isalnum():
+            cur.append(ch)
+        elif cur:
+            tok.append("".join(cur))
+            cur = []
+    if cur:
+        tok.append("".join(cur))
+    return tok
+
+
+def _extract_answer_key(content: str) -> str:
+    """The held-out answer token for a fact. Deterministic heuristic.
+
+    "Ask about the subject, hold out the most distinctive object word":
+    skip the leading subject token, drop stopwords, then take the longest
+    remaining token (ties broken by later position — objects trail
+    subjects). E.g. "Scott prefers oolong tea" -> "oolong".
+    """
+    toks = _content_tokens(content)
+    if not toks:
+        return ""
+    candidates = [t for t in toks[1:] if t not in _STOPWORDS]
+    if not candidates:
+        candidates = [t for t in toks if t not in _STOPWORDS] or toks
+    return max(candidates, key=lambda t: (len(t), toks.index(t)))
+
+
+def _mask_key(content: str, key: str) -> str:
+    """Replace whole-word occurrences of ``key`` in ``content`` with ``___``."""
+    out: list[str] = []
+    word: list[str] = []
+    for ch in content:
+        if ch.isalnum():
+            word.append(ch)
+            continue
+        if word:
+            seg = "".join(word)
+            out.append("___" if seg.lower() == key else seg)
+            word = []
+        out.append(ch)
+    if word:
+        seg = "".join(word)
+        out.append("___" if seg.lower() == key else seg)
+    return "".join(out)
 
 
 def generate_dream_queries(memory: Memory) -> list[str]:
-    """Generate dream queries for a single memory. Deterministic."""
-    return [tpl.format(fact=memory.content) for tpl in _QUERY_TEMPLATES]
+    """Generate held-out dream queries for a memory. Deterministic.
+
+    Each query elides the answer key, so the fact is withheld from the
+    answerer's prompt — an echo of the query cannot score a hit.
+    """
+    key = _extract_answer_key(memory.content)
+    masked = _mask_key(memory.content, key) if key else memory.content
+    return [tpl.format(masked=masked) for tpl in _QUERY_TEMPLATES]
 
 
 def grade_hit(answer: str, memory: Memory) -> bool:
-    """Substring-match grading: does the answer mention the fact?
+    """Key-recall grading: does the answer contain the memory's answer key?
 
-    Mirrors the F-ML-2 substring-match grader. Lowercase + whitespace-
-    normalize both sides before checking. Empty answer always misses.
+    Grades the answer against the held-out key (`_extract_answer_key`),
+    NOT the whole fact — so echoing the (key-elided) question misses, while
+    a correct paraphrase that surfaces the key hits. Empty answer always
+    misses. Whole-word match after lowercasing.
     """
     if not answer:
         return False
-    needle = " ".join(memory.content.lower().split())
-    haystack = " ".join(answer.lower().split())
-    return needle in haystack
+    key = _extract_answer_key(memory.content)
+    if not key:
+        return False
+    return key in _content_tokens(answer)
+
+
+def _ground_prompt(context: list[str], query: str) -> str:
+    """Prepend retrieved memories to a dream query so the answerer must recall
+    from the store, not guess. ADR-027 Track C: turns the self-test from an
+    ungrounded cloze into a real recall test."""
+    facts = "\n".join(f"- {c}" for c in context)
+    return f"Remembered facts:\n{facts}\n\n{query}"
 
 
 def run_dream_cycle(
@@ -63,12 +147,22 @@ def run_dream_cycle(
     memories: list[Memory],
     llm_client: Any | None,
     max_samples: int = 32,
+    retriever: Callable[[str], Any] | None = None,
 ) -> ConsolidationReport:
     """Run one dream-synthesis cycle over `memories`.
 
     Caller-supplied `llm_client` must expose a `.complete(prompt: str)
     -> str` method (most popular LLM SDKs do; thin adapters are trivial
     to write — see README).
+
+    `retriever` (ADR-027 Track C) — optional `Callable[[query], Iterable[str]]`
+    that returns context snippets for a dream query (e.g.
+    ``lambda q: [r.memory.content for r in client.search(q, top_k=k)]``). When
+    supplied, the answerer is prompted WITH the retrieved memories, so the
+    self-test measures genuine store-grounded recall rather than cloze-from-
+    query. Default ``None`` preserves the v1 (ungrounded) behaviour exactly: a
+    retriever miss (empty result or raise) falls back to the bare query, never
+    a crash.
 
     Returns a ConsolidationReport. When `llm_client` is None, the report
     is well-formed with `hit_rate=0.0`, `llm_calls=0`, but the count of
@@ -101,8 +195,16 @@ def run_dream_cycle(
     hits = 0
     answer_func = _resolve_llm_callable(llm_client)
     for memory, query in queries:
+        prompt = query
+        if retriever is not None:
+            try:
+                context = [str(c) for c in retriever(query)]
+            except Exception:  # noqa: BLE001 — caller's retriever, anything goes
+                context = []
+            if context:
+                prompt = _ground_prompt(context, query)
         try:
-            answer = answer_func(query)
+            answer = answer_func(prompt)
         except Exception:  # noqa: BLE001 — caller's LLM, anything goes
             answer = ""
         report.llm_calls += 1

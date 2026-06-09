@@ -33,6 +33,21 @@ _CLIENT_LOCK = threading.Lock()
 _CLIENT: MemoryClient | None = None
 _DEFAULT_USER_ID = "myelin-sidecar-default"
 
+# Tool-call counter for vacuous-PASS guards (preflight integration checks).
+# Increments on every successful /tools/* and /hooks/* invocation.
+_TOOL_CALL_COUNTER_LOCK = threading.Lock()
+_TOOL_CALL_COUNTER: dict[str, int] = {"tool_invocations": 0, "reset_count": 0}
+
+
+def _bump_counter(key: str = "tool_invocations") -> None:
+    with _TOOL_CALL_COUNTER_LOCK:
+        _TOOL_CALL_COUNTER[key] = _TOOL_CALL_COUNTER.get(key, 0) + 1
+
+
+def _snapshot_counter() -> dict[str, int]:
+    with _TOOL_CALL_COUNTER_LOCK:
+        return dict(_TOOL_CALL_COUNTER)
+
 
 def _get_client() -> MemoryClient:
     global _CLIENT
@@ -211,6 +226,9 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._write_json(200, {"ok": True, "service": "myelin-sidecar"})
             return
+        if self.path == "/metrics":
+            self._write_json(200, _snapshot_counter())
+            return
         self._write_json(404, {"error": f"unknown route {self.path}"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -224,6 +242,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if self.path == "/admin/reset":
             _reset_client()
+            _bump_counter("reset_count")
             self._write_json(200, {"ok": True, "reset": True})
             return
 
@@ -234,6 +253,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         try:
             result = handler(payload)
+            _bump_counter("tool_invocations")
             self._write_json(200, result)
         except KeyError as exc:
             self._write_json(400, {"error": f"missing field: {exc}"})
