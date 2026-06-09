@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections import deque
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -114,6 +116,8 @@ class MemoryClient:
         salience_mode: str = "off",
         salience_tau: float = 0.40,
         salience_require_reward: bool = False,
+        salience_embedder: Any | None = None,
+        salience_neighbor_window: int = 32,
         dmem_gate: Any | None = None,
         cite_learning: bool | None = None,
         working_memory: bool | None = None,
@@ -165,6 +169,20 @@ class MemoryClient:
             if salience_mode == "heuristic"
             else None
         )
+        # B2 (ADR-026): the heuristic gate's novelty axis is wired to a real
+        # embedder + per-user rolling neighbour window, so novelty varies as
+        # the conversation moves instead of pinning at the 0.5 cold-start
+        # constant. An explicit ``salience_embedder`` (anything with
+        # ``.encode(text) -> Sequence[float]``) wins; otherwise the default
+        # sentence-transformers embedder is lazy-built on first heuristic add
+        # (so the dependency is only paid when heuristic mode is selected,
+        # mirroring the D-MEM path). On embedder-load failure novelty falls
+        # back to cold-start neutral rather than crashing ``add()``.
+        self._salience_embedder_arg = salience_embedder
+        self._salience_embedder_resolved: Any | None = None
+        self._salience_embedder_failed = False
+        self._salience_neighbor_window = max(1, int(salience_neighbor_window))
+        self._heuristic_windows: dict[str, deque] = {}
         self._dmem_gate = None
         if salience_mode == "dmem":
             if dmem_gate is None:
@@ -218,6 +236,59 @@ class MemoryClient:
         self._n_hits_long_term = 0
         self._n_calls_with_working_hit = 0
 
+    # ---- salience: heuristic novelty wiring (B2, ADR-026) -------
+
+    def _heuristic_embedder(self) -> Any | None:
+        """Resolve the heuristic-novelty embedder, lazy-building the default
+        sentence-transformers adapter on first use. Returns ``None`` (→ cold-
+        start neutral novelty) if no embedder is available or a build fails."""
+        if self._salience_embedder_arg is not None:
+            return self._salience_embedder_arg
+        if self._salience_embedder_resolved is not None:
+            return self._salience_embedder_resolved
+        if self._salience_embedder_failed:
+            return None
+        try:
+            from myelin._internal.dmem_gate import _default_embedder
+
+            self._salience_embedder_resolved = _default_embedder()
+            return self._salience_embedder_resolved
+        except Exception as exc:  # noqa: BLE001 — degrade, never crash add()
+            self._salience_embedder_failed = True
+            logger.warning(
+                "heuristic salience embedder unavailable (%s: %s); novelty "
+                "falls back to cold-start neutral",
+                type(exc).__name__,
+                exc,
+            )
+            return None
+
+    def _heuristic_novelty_inputs(
+        self, content: str, scope: str
+    ) -> tuple[list[float] | None, list[list[float]]]:
+        """Embed ``content`` and return ``(query_embedding, neighbours)`` from
+        the user's rolling window, then append the embedding to the window so
+        the turn is scored against its predecessors, not itself (mirrors the
+        D-MEM neighbour-window discipline)."""
+        embedder = self._heuristic_embedder()
+        emb: list[float] | None = None
+        if embedder is not None:
+            try:
+                emb = list(embedder.encode(content))
+            except Exception as exc:  # noqa: BLE001 — degrade to cold-start
+                logger.warning(
+                    "heuristic novelty embed failed (%s); cold-start neutral",
+                    type(exc).__name__,
+                )
+                emb = None
+        window = self._heuristic_windows.setdefault(
+            scope, deque(maxlen=self._salience_neighbor_window)
+        )
+        neighbors = list(window)
+        if emb:
+            window.append(emb)
+        return emb, neighbors
+
     # ---- CRUD (5/7) ---------------------------------------------
 
     def add(
@@ -229,6 +300,7 @@ class MemoryClient:
         event: dict | Event | None = None,
         confidence: float = 0.5,
         importance: float = 0.5,
+        outcome: Mapping[str, object] | None = None,
     ) -> Memory:
         """Add a fact to the substrate.
 
@@ -242,6 +314,12 @@ class MemoryClient:
         calls reconstruct historical state correctly across superseding
         writes. Without `event=`, the fact is timestamped at write time
         only — `as_of=t` still works but you lose the provenance chain.
+
+        `outcome` (B2, ADR-026): an optional outcome mapping
+        (`task_succeeded` / `user_thumbs_up` / `user_thumbs_down` /
+        `error`) threaded into the heuristic salience gate's reward axis.
+        Only consulted in `salience_mode="heuristic"`; ignored otherwise.
+        When omitted the reward signal is 0.0 (the PersonaMem default).
         """
         ev: Event | None
         if event is None:
@@ -265,8 +343,12 @@ class MemoryClient:
         self._n_add_calls += 1
         gate_meta: dict[str, Any] = {}
         if self._salience_mode == "heuristic":
+            q_emb, neighbors = self._heuristic_novelty_inputs(content, scope)
             decision = score_turn_heuristic(
                 text=content,
+                outcome=outcome,
+                query_embedding=q_emb,
+                neighbor_embeddings=neighbors,
                 gate=self._heuristic_gate,
             )
             gate_meta = {
@@ -274,6 +356,8 @@ class MemoryClient:
                 "salience_score": decision.score,
                 "salience_tag": decision.tag,
                 "salience_reason": decision.reason,
+                "salience_novelty": decision.bundle.novelty if decision.bundle else None,
+                "salience_reward": decision.bundle.reward if decision.bundle else None,
             }
             if not decision.tag:
                 self._n_add_dropped += 1
@@ -642,8 +726,16 @@ class MemoryClient:
 
             # Salience gate at commit time (NFR-B3).
             if self._salience_mode == "heuristic":
+                turn_outcome = (turn.metadata or {}).get("outcome")
+                q_emb, neighbors = self._heuristic_novelty_inputs(
+                    turn.content, state.user_id
+                )
                 decision = score_turn_heuristic(
-                    text=turn.content, gate=self._heuristic_gate,
+                    text=turn.content,
+                    outcome=turn_outcome,
+                    query_embedding=q_emb,
+                    neighbor_embeddings=neighbors,
+                    gate=self._heuristic_gate,
                 )
                 if not decision.tag:
                     # Dropped by salience; do NOT persist. Counted in
@@ -655,6 +747,8 @@ class MemoryClient:
                     "salience_score": decision.score,
                     "salience_tag": decision.tag,
                     "salience_reason": decision.reason,
+                    "salience_novelty": decision.bundle.novelty if decision.bundle else None,
+                    "salience_reward": decision.bundle.reward if decision.bundle else None,
                 }
             elif self._salience_mode == "dmem":
                 assert self._dmem_gate is not None

@@ -1,8 +1,128 @@
 # Changelog
 
-All notable changes to the `myelin` Python SDK are documented here. Format
+All notable changes to the `myelin-ai` Python SDK are documented here. Format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the
 project uses semantic versioning.
+
+## [1.4.0] — 2026-06-09
+
+Three bug fixes to load-bearing mechanisms (D-MEM surprise, dream grader,
+heuristic salience wiring) plus an opt-in store-grounding upgrade to the dream
+cycle. Six new optional kwargs across the public API; no kwargs removed; the
+existing v1.3 surface still works with prior defaults preserved.
+
+This is the first release where `pip install myelin-ai==1.4.0` ships the
+substrate as it was intended in 1.3 — the previously-pinned scoring axes and
+grader were silently no-oping in production.
+
+### Fixed
+
+- **D-MEM surprise score now actually moves with the query.**
+  `myelin._internal._dmem_helpers.zscore_surprise(query, neighbors)` was
+  Z-scoring `raw_distance` against the same `dists` array it was the mean of,
+  so `raw == mu` and `z == 0` for every input. The query never moved the
+  score, which silently flattened the entire surprise axis. The reference
+  distribution is now derived via leave-one-out mean cosine-distance of each
+  neighbour to the rest (`_neighbor_reference_dists`) — a distribution that's
+  independent of the query. Callers can also thread their own rolling
+  per-user history via the new `reference=` kwarg. Cold-start fallback widens
+  from `[0, 1]` to `[-1, 1]` (signed deviation).
+
+- **Dream grader now scores recall, not parroting.** Dream queries previously
+  included the fact verbatim in the prompt (`"What do you remember about:
+  {fact}"`), so the answerer could echo the question and score a hit. Fix:
+  extract a held-out "answer key" from each fact (longest distinctive
+  non-stopword) and mask it from the prompt (`"Fill in the blank from
+  memory: ___"`); grade against the held-out key only.
+
+- **Heuristic salience novelty axis is actually wired.** The heuristic-mode
+  salience gate's `novelty` signal was pinned at the 0.5 cold-start neutral
+  for every turn because no embedder was threaded. `MemoryClient` now
+  lazy-builds a sentence-transformers embedder on first heuristic `add()`
+  (deferred dep, only paid in heuristic mode), maintains a per-scope rolling
+  deque of past embeddings as the neighbour window, and feeds
+  `(query_embedding, neighbors)` into `score_turn_heuristic`. Embed failure
+  degrades to cold-start neutral (never raises in `add()`). Configurable via
+  the new `salience_embedder=` and `salience_neighbor_window=` constructor
+  kwargs (defaults: lazy-built default embedder, window 32). `GateDecision`
+  now exposes the originating `SignalBundle` so callers can read per-axis
+  `novelty` / `reward` without re-deriving them.
+
+### Added
+
+- **`MemoryClient.add(..., outcome=...)` — reward signal for the salience
+  gate.** Optional `Mapping[str, object]` with keys `task_succeeded`,
+  `user_thumbs_up`, `user_thumbs_down`, `error`. Only consulted in
+  `salience_mode="heuristic"`; ignored in `"off"` / `"dmem"`. Defaults to
+  `None` — backwards compatible (reward stays 0.0 in that path, matching
+  v1.3 behavior).
+
+- **`run_dream_cycle(..., retriever=callable)` — store-grounded dream
+  queries.** When supplied, each dream query is prepended with retrieved
+  memory context (`"Remembered facts:\n- …\n\n{query}"`) so the answerer
+  must recall from the store rather than guess from the elided prompt.
+  Default `retriever=None` preserves the v1.3 ungrounded behavior exactly;
+  a retriever miss (empty result or raise) falls back to the bare query
+  (never a crash). The intended wiring is:
+
+  ```python
+  client.consolidate(
+      retriever=lambda q: [r.memory.content for r in client.search(q, top_k=5)],
+  )
+  ```
+
+  Reference re-derivation on the LongMemEval-oracle smoke: honest
+  `hit_rate = 0.867` with store-grounding, clearing the recall bar that the
+  ungrounded cloze couldn't reach without echoing.
+
+- **`/metrics` endpoint on the HTTP sidecar.** `GET /metrics` returns
+  `{"tool_invocations": int, "reset_count": int}` — the per-process counter
+  is bumped on every successful `/tools/*` and `/hooks/*` call and on
+  `/admin/reset`. Built for preflight integration checks: a bench can assert
+  `tool_invocations > 0` before treating an "all-PASS" result as non-vacuous.
+
+### Changed
+
+- **Behavior changes that aren't drop-in equivalent.** The dream grader
+  (`grade_hit`) and the D-MEM surprise score (`zscore_surprise`) return
+  materially different values from 1.3 for the same inputs — by design,
+  because the v1.3 behaviour was a no-op. Snapshot tests that pinned to the
+  old "substring contains fact" grader output or the always-zero z-score
+  will need to be updated. Threshold tuning calibrated against the 1.3
+  surprise output should be re-run.
+
+### New optional kwargs
+
+| Surface | Kwarg | Default | Purpose |
+|---|---|---|---|
+| `MemoryClient.__init__` | `salience_embedder` | `None` (lazy default) | Override the heuristic-novelty embedder. |
+| `MemoryClient.__init__` | `salience_neighbor_window` | `32` | Per-scope rolling neighbour window length. |
+| `MemoryClient.add` | `outcome` | `None` | Outcome mapping threaded into the heuristic salience gate's reward axis. |
+| `myelin._internal.dream.run_dream_cycle` | `retriever` | `None` | Optional `Callable[[query], Iterable[str]]` for store-grounded dream queries. |
+| `myelin._internal._dmem_helpers.zscore_surprise` | `reference` | `None` (neighbour-derived) | Optional caller-supplied reference distribution. |
+
+### Compatibility
+
+- All new kwargs are optional with defaults that preserve prior behavior — no
+  signatures break.
+- The grader and surprise-score behavior changes are bug fixes; they DO change
+  numerical output for the same inputs. Anyone with snapshot tests or
+  calibrated thresholds against the 1.3 values will need to retune.
+- `myelin.agent.OrchestratedAgent` (v1.3 addition) is unchanged.
+- `cite()`, `session()`, working-memory tier, and the HTTP sidecar's existing
+  endpoints are unchanged.
+
+### Migration notes (1.3 → 1.4)
+
+- **No mandatory action.** Existing call sites continue to work.
+- **If you were calling `consolidate()` and observing low `hit_rate`** —
+  it was being suppressed by the broken grader rewarding parrots. After
+  upgrading, expect `hit_rate` to drop for substrates that previously had
+  high-but-vacuous numbers. To recover real recall, wire `retriever=` to
+  `client.search`.
+- **If you were running `salience_mode="heuristic"` and seeing the gate
+  not discriminate** — that was the unwired novelty axis. After upgrading,
+  the heuristic gate will actually fire. Re-tune `salience_tau` if needed.
 
 ## [1.3.1] — 2026-05-22
 

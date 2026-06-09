@@ -29,7 +29,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 # --------------------------------------------------------------------
@@ -158,6 +158,12 @@ class GateDecision:
     score: float
     tag: bool
     reason: str = ""
+    # The four signals that produced this decision. Attached by
+    # ``score_turn_heuristic`` so callers (MemoryClient telemetry, the
+    # as-wired liveness probe) can observe the individual novelty/reward
+    # axes without re-deriving them. ``None`` when a gate is evaluated
+    # directly from a hand-built bundle.
+    bundle: "SignalBundle | None" = None
 
 
 def _sigmoid(x: float) -> float:
@@ -215,7 +221,8 @@ def score_turn_heuristic(
         reward=reward_score(outcome),
         reference=reference_score(text),
     )
-    return g.evaluate(bundle)
+    decision = g.evaluate(bundle)
+    return replace(decision, bundle=bundle)
 
 
 __all__ = [

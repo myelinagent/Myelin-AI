@@ -150,28 +150,63 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     return dot / (math.sqrt(na) * math.sqrt(nb))
 
 
+def _neighbor_reference_dists(
+    neighbors: Sequence[Sequence[float]],
+) -> list[float]:
+    """Leave-one-out mean cosine-distance of each neighbour to the rest.
+
+    This is the reference distribution that the query's ``raw`` surprise
+    is Z-scored against: "how far does a typical member of this
+    neighbourhood sit from the rest of it?" It is INDEPENDENT of the
+    query, so as the query moves, the Z-score moves — the discriminating
+    property the old code destroyed by Z-scoring ``raw`` against the very
+    distances that defined it (raw == mu => z == 0 for every query).
+    """
+    n = len(neighbors)
+    out: list[float] = []
+    for i, ni in enumerate(neighbors):
+        others = [neighbors[j] for j in range(n) if j != i]
+        if not others:
+            continue
+        d = [1.0 - cosine(ni, o) for o in others]
+        out.append(sum(d) / len(d))
+    return out
+
+
 def zscore_surprise(
     query: Sequence[float],
     neighbors: Sequence[Sequence[float]],
+    reference: Sequence[float] | None = None,
 ) -> tuple[float, float]:
     """Returns (raw_distance, z_score).
 
-    raw_distance = 1 - mean_cosine_similarity_to_neighbors
-    z_score = (raw_distance - mean(distances)) / std(distances), clipped.
+    raw_distance = 1 - mean_cosine_similarity_to_neighbors.
+    z_score = (raw_distance - mean(reference)) / std(reference), clipped
+    to [-3, 3], where ``reference`` is a distribution INDEPENDENT of
+    ``raw_distance``:
 
-    With < 3 neighbors we fall back to raw distance scaled to [0, 1] —
+    * If ``reference`` is given (>= 3 samples) — e.g. a rolling per-user
+      history of past raw distances threaded by the caller — Z-score
+      against it.
+    * Otherwise derive it from the neighbourhood itself via
+      ``_neighbor_reference_dists``. This is what makes the as-wired
+      ``(query, neighbors)`` call respond to the query.
+
+    With < 3 reference samples we fall back to raw scaled to [-1, 1] —
     the cold-start regime has no distribution to Z-normalize against.
     """
     if not neighbors:
         return 0.5, 0.0  # cold-start neutral
     sims = [cosine(query, n) for n in neighbors]
     dists = [1.0 - s for s in sims]
-    raw = sum(dists) / len(dists)  # mean distance to neighbors
-    if len(dists) < 3:
+    raw = sum(dists) / len(dists)  # query's mean distance to neighbors
+
+    ref = list(reference) if reference is not None else _neighbor_reference_dists(neighbors)
+    if len(ref) < 3:
         # Not enough samples for a meaningful Z; map raw to [-1, 1].
         return raw, max(-1.0, min(1.0, (raw - 0.5) * 2.0))
-    mu = sum(dists) / len(dists)
-    var = sum((d - mu) ** 2 for d in dists) / len(dists)
+    mu = sum(ref) / len(ref)
+    var = sum((d - mu) ** 2 for d in ref) / len(ref)
     sigma = math.sqrt(var) if var > 0 else 1e-6
     z = (raw - mu) / sigma
     z_clipped = max(-3.0, min(3.0, z))
