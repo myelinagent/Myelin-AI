@@ -294,16 +294,30 @@ class SqliteBackend:
         return [SearchResult(memory=m, score=s) for s, m in scored[:top_k]]
 
     def get(self, memory_id: str) -> Memory | None:
+        results = self.get_batch([memory_id])
+        return results[0] if results else None
+
+    def get_batch(self, memory_ids: list[str]) -> list[Memory]:
+        """Batch-fetch multiple memories by id in a single query.
+
+        Returns memories in arbitrary order; only non-tombstoned
+        memories are returned. Unknown ids are silently omitted.
+        """
+        if not memory_ids:
+            return []
         with self._lock:
             cur = self._conn.cursor()
-            row = cur.execute(
-                "SELECT * FROM memories WHERE id = ? AND health_state != 'tombstoned'",
-                (memory_id,),
-            ).fetchone()
-            if row is None:
-                return None
+            placeholders = ",".join("?" for _ in memory_ids)
+            rows = cur.execute(
+                f"SELECT * FROM memories WHERE id IN ({placeholders}) "
+                "AND health_state != 'tombstoned'",
+                memory_ids,
+            ).fetchall()
+            if not rows:
+                return []
             cols = [d[0] for d in cur.description]
-            return self._row_to_memory(dict(zip(cols, row, strict=True)))
+            raw = [dict(zip(cols, r, strict=True)) for r in rows]
+            return self._batch_rows_to_memories(raw)
 
     def update(
         self,
@@ -361,23 +375,20 @@ class SqliteBackend:
                     (user_id,),
                 ).fetchall()
             cols = [d[0] for d in cur.description]
-            live = [
-                self._row_to_memory(dict(zip(cols, r, strict=True))) for r in rows
-            ]
+            raw = [dict(zip(cols, r, strict=True)) for r in rows]
+            live = self._batch_rows_to_memories(raw)
             if not include_tombstoned:
                 return live
             # Tombstones table has an extra `tombstoned_at` column at the
-            # end. SELECT * brings it through; _row_to_memory ignores
+            # end. SELECT * brings it through; _batch_rows_to_memories ignores
             # unknown keys so the shape lines up.
             tomb_rows = cur.execute(
                 "SELECT * FROM tombstones WHERE user_id = ? ORDER BY tombstoned_at",
                 (user_id,),
             ).fetchall()
             tomb_cols = [d[0] for d in cur.description]
-            tombstoned = [
-                self._row_to_memory(dict(zip(tomb_cols, r, strict=True)))
-                for r in tomb_rows
-            ]
+            tomb_raw = [dict(zip(tomb_cols, r, strict=True)) for r in tomb_rows]
+            tombstoned = self._batch_rows_to_memories(tomb_raw)
             return live + tombstoned
 
     def transition_state(
@@ -579,29 +590,32 @@ class SqliteBackend:
         # fusion was added — good enough for the SDK's default backend.
         return overlap + 0.5 * (overlap / max(1, len(c_tokens)))
 
-    def _row_to_memory(self, row: dict[str, Any]) -> Memory:
+    def _row_to_memory(self, row: dict[str, Any], *, _events_override: dict[str, Event] | None = None) -> Memory:
         event = None
         ev_id = row.get("event_id")
         if ev_id:
-            cur = self._conn.cursor()
-            ev_row = cur.execute(
-                "SELECT * FROM events WHERE event_id = ?", (ev_id,)
-            ).fetchone()
-            if ev_row is not None:
-                ev_cols = [d[0] for d in cur.description]
-                ev = dict(zip(ev_cols, ev_row, strict=True))
-                event = Event(
-                    event_id=ev["event_id"],
-                    type=ev.get("type", "") or "",
-                    anchor_datetime=_iso_to_dt(ev.get("anchor_datetime")),
-                    location=ev.get("location", "") or "",
-                    participant_ids=tuple(
-                        json.loads(ev.get("participant_ids") or "[]")
-                    ),
-                    evidence_turn_ids=tuple(
-                        json.loads(ev.get("evidence_turn_ids") or "[]")
-                    ),
-                )
+            if _events_override is not None and ev_id in _events_override:
+                event = _events_override[ev_id]
+            else:
+                cur = self._conn.cursor()
+                ev_row = cur.execute(
+                    "SELECT * FROM events WHERE event_id = ?", (ev_id,)
+                ).fetchone()
+                if ev_row is not None:
+                    ev_cols = [d[0] for d in cur.description]
+                    ev = dict(zip(ev_cols, ev_row, strict=True))
+                    event = Event(
+                        event_id=ev["event_id"],
+                        type=ev.get("type", "") or "",
+                        anchor_datetime=_iso_to_dt(ev.get("anchor_datetime")),
+                        location=ev.get("location", "") or "",
+                        participant_ids=tuple(
+                            json.loads(ev.get("participant_ids") or "[]")
+                        ),
+                        evidence_turn_ids=tuple(
+                            json.loads(ev.get("evidence_turn_ids") or "[]")
+                        ),
+                    )
         return Memory(
             id=row["id"],
             content=row["content"],
@@ -623,3 +637,46 @@ class SqliteBackend:
             cite_incorrect_count=int(row.get("cite_incorrect_count") or 0),
             last_cited_at=_iso_to_dt(row.get("last_cited_at")),
         )
+
+    def _batch_rows_to_memories(self, rows: list[dict[str, Any]]) -> list[Memory]:
+        """Batch-convert raw dict rows to Memory objects with one event query.
+
+        Collects all event_ids from the rows, fetches them in a single
+        query, and threads the results through to avoid N+1 event
+        queries per memory (the previous per-row behaviour).
+        """
+        if not rows:
+            return []
+        event_ids = {
+            r["event_id"]
+            for r in rows
+            if r.get("event_id")
+        }
+        events_override: dict[str, Event] = {}
+        if event_ids:
+            cur = self._conn.cursor()
+            placeholders = ",".join("?" for _ in event_ids)
+            ev_rows = cur.execute(
+                f"SELECT * FROM events WHERE event_id IN ({placeholders})",
+                list(event_ids),
+            ).fetchall()
+            if ev_rows:
+                ev_cols = [d[0] for d in cur.description]
+                for ev_row in ev_rows:
+                    ev = dict(zip(ev_cols, ev_row, strict=True))
+                    events_override[ev["event_id"]] = Event(
+                        event_id=ev["event_id"],
+                        type=ev.get("type", "") or "",
+                        anchor_datetime=_iso_to_dt(ev.get("anchor_datetime")),
+                        location=ev.get("location", "") or "",
+                        participant_ids=tuple(
+                            json.loads(ev.get("participant_ids") or "[]")
+                        ),
+                        evidence_turn_ids=tuple(
+                            json.loads(ev.get("evidence_turn_ids") or "[]")
+                        ),
+                    )
+        return [
+            self._row_to_memory(r, _events_override=events_override)
+            for r in rows
+        ]

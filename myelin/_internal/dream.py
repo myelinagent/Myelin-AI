@@ -118,17 +118,20 @@ def generate_dream_queries(memory: Memory) -> list[str]:
     return [tpl.format(masked=masked) for tpl in _QUERY_TEMPLATES]
 
 
-def grade_hit(answer: str, memory: Memory) -> bool:
+def grade_hit(answer: str, memory: Memory, *, answer_key: str | None = None) -> bool:
     """Key-recall grading: does the answer contain the memory's answer key?
 
     Grades the answer against the held-out key (`_extract_answer_key`),
     NOT the whole fact — so echoing the (key-elided) question misses, while
     a correct paraphrase that surfaces the key hits. Empty answer always
     misses. Whole-word match after lowercasing.
+
+    Pass ``answer_key`` when it has already been extracted (e.g. during
+    ``run_dream_cycle``) to avoid re-extraction.
     """
     if not answer:
         return False
-    key = _extract_answer_key(memory.content)
+    key = _extract_answer_key(memory.content) if answer_key is None else answer_key
     if not key:
         return False
     return key in _content_tokens(answer)
@@ -179,22 +182,23 @@ def run_dream_cycle(
     ]
     sample = eligible[:max_samples]
 
-    queries: list[tuple[Memory, str]] = []
+    query_set: list[tuple[Memory, str, str]] = []  # (memory, query, answer_key)
     for m in sample:
+        key = _extract_answer_key(m.content)
         for q in generate_dream_queries(m):
-            queries.append((m, q))
+            query_set.append((m, q, key))
 
     report = ConsolidationReport(
-        dream_queries_generated=len(queries),
+        dream_queries_generated=len(query_set),
         facts_sampled=len(sample),
     )
 
-    if llm_client is None or not queries:
+    if llm_client is None or not query_set:
         return report
 
     hits = 0
     answer_func = _resolve_llm_callable(llm_client)
-    for memory, query in queries:
+    for memory, query, key in query_set:
         prompt = query
         if retriever is not None:
             try:
@@ -208,7 +212,7 @@ def run_dream_cycle(
         except Exception:  # noqa: BLE001 — caller's LLM, anything goes
             answer = ""
         report.llm_calls += 1
-        if grade_hit(answer, memory):
+        if grade_hit(answer, memory, answer_key=key):
             hits += 1
 
     report.hit_rate = hits / report.llm_calls if report.llm_calls else 0.0

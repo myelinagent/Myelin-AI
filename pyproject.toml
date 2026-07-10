@@ -36,7 +36,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Operating System :: OS Independent",
 ]
 dependencies = []  # zero hard deps in core; sqlite3 ships with cpython
 
@@ -105,3 +104,6 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q"
+markers = [
+    "benchmark: 1,000-episode promoter/consolidation benchmark test.",
+]

@@ -55,6 +55,16 @@ class Backend(Protocol):
     def get(self, memory_id: str) -> Memory | None:
         ...
 
+    def get_batch(self, memory_ids: list[str]) -> list[Memory]:
+        """Batch-fetch multiple memories by id.
+
+        Returns only non-tombstoned memories; unknown ids are silently
+        omitted. Default implementation delegates to per-id get() for
+        backends that don't override it — overrides SHOULD issue a
+        single query.
+        """
+        ...
+
     def update(
         self,
         memory_id: str,
