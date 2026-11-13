@@ -32,6 +32,15 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
   exported. End to end on LongMemEval-S with `gpt-4o-mini` answering,
   accuracy went from 60.4% (1.4.0 search, top 10) to 64.8%
   (`bench/results/longmemeval_s_accuracy.md`).
+- **`build_answer_prompt(history, question, now=..., style=...)`** wraps
+  recalled context in instructions for the cases where answering models go
+  wrong with memory: changed facts, totals and orderings, dates relative to
+  a conversation, requests for advice, and questions the history does not
+  cover. Styles `"reasoned"` and `"direct"`. On LongMemEval-S it took
+  `gpt-4o-mini` from 64.8% to 77.2% on the same retrieval; `gpt-4o` scores
+  82.8%.
+- **`recall(whole_results=3)`** leaves the best-ranked results unshortened,
+  so an answer inside a long memory is not lost to an excerpt.
 - **`format_context(results)`** renders results oldest first under date
   headings; `fit_to_budget` and `estimate_tokens` are exported with it.
 - **Headless benchmark harness** (`bench/`, not part of the published

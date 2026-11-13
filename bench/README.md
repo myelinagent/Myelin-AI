@@ -33,6 +33,11 @@ python -m bench.longmemeval run --system myelin --data longmemeval_s_cleaned.jso
 Add `--max-turn-tokens 300` to shorten longer turns to a query-focused
 excerpt before they are counted against the budget.
 
+`--whole-turns 3` keeps the three best-ranked turns complete. `--prompt`
+selects the answer prompt: `reasoned` (default) or `direct` from
+`myelin.build_answer_prompt`, or `v1`, the plain prompt the first baselines
+used.
+
 Compare runs:
 
 ```bash
