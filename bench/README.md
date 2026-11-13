@@ -38,6 +38,9 @@ selects the answer prompt: `reasoned` (default) or `direct` from
 `myelin.build_answer_prompt`, or `v1`, the plain prompt the first baselines
 used.
 
+`--embedder minishlab/potion-retrieval-32M` turns on hybrid search with a
+static embedding model (needs `pip install model2vec`).
+
 Compare runs:
 
 ```bash

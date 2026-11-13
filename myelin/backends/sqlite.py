@@ -22,6 +22,12 @@ the SQLite bundled in CPython, so the backend stays dependency-free; on a
 SQLite built without it, search falls back to a token-overlap scan of the
 user's memories.
 
+When memories are stored with embedding vectors (``memory_vectors``) and a
+query vector is supplied, search fuses the BM25 ranking with a cosine
+ranking over those vectors. Vectors are compared by a full scan, which is
+fast at the scale of one user's memories and needs no index; numpy is
+used when installed.
+
 v1.2 migration discipline: ``_apply_migrations`` is idempotent on every
 connect. ``PRAGMA table_info`` introspection adds missing columns; new
 tables use ``CREATE TABLE IF NOT EXISTS``. A v1 substrate opens cleanly
@@ -31,10 +37,13 @@ new fields default to 0/NULL.
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 import threading
 import uuid
+from array import array
+from collections import defaultdict
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -138,6 +147,25 @@ CREATE TABLE IF NOT EXISTS memories_fts_rows (
 );
 """
 
+# Embedding vectors for hybrid search, unit length, float32.
+_VECTOR_SCHEMA = """
+CREATE TABLE IF NOT EXISTS memory_vectors (
+    memory_id   TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    vector      BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_vectors_user ON memory_vectors(user_id);
+"""
+
+# Reciprocal-rank fusion of the lexical and vector rankings. The vector
+# ranking gets twice the weight: on LongMemEval-S that beat equal weights
+# and lexical-heavy weights for every embedding model tried.
+_RRF_K = 60
+_LEXICAL_WEIGHT = 1.0
+_VECTOR_WEIGHT = 2.0
+# How far down each ranking fusion looks.
+_FUSION_DEPTH = 300
+
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]+")
 _QUERY_TERM_RE = re.compile(r"[A-Za-z0-9]+")
 _STOPWORDS = frozenset(
@@ -181,6 +209,15 @@ def _chunks(items: list[str]) -> Iterator[list[str]]:
 
 def _placeholders(n: int) -> str:
     return ",".join("?" * n)
+
+
+def _unit_vector_bytes(vector: Sequence[float]) -> bytes:
+    """Serialize ``vector`` as unit-length float32."""
+    values = [float(x) for x in vector]
+    norm = math.sqrt(sum(x * x for x in values))
+    if not values or norm == 0.0 or not math.isfinite(norm):
+        raise ValueError("embedding vector must be non-empty, finite and non-zero")
+    return array("f", (x / norm for x in values)).tobytes()
 
 
 def _dt_to_iso(dt: datetime | None) -> str | None:
@@ -252,8 +289,12 @@ class SqliteBackend:
                     )
 
             cursor.executescript(_SCHEMA_V1_2_NEW_TABLES)
+            cursor.executescript(_VECTOR_SCHEMA)
             self._conn.commit()
             self._fts = self._init_fts()
+            # user_id -> (memory ids, their vectors), built on first
+            # vector search and dropped when that user's vectors change.
+            self._vector_cache: dict[str, tuple[list[str], Any, int]] = {}
 
     def _init_fts(self) -> bool:
         """Create the full-text index, indexing any memories written
@@ -302,7 +343,9 @@ class SqliteBackend:
         t_valid: datetime | None = None,
         confidence: float = 0.5,
         importance: float = 0.5,
+        vector: Sequence[float] | None = None,
     ) -> Memory:
+        vector_blob = _unit_vector_bytes(vector) if vector is not None else None
         if t_valid is None:
             t_valid = datetime.now(UTC)
         elif t_valid.tzinfo is None:
@@ -342,6 +385,8 @@ class SqliteBackend:
                     "VALUES (?, ?)",
                     (mem_id, cur.lastrowid),
                 )
+            if vector_blob is not None:
+                self._write_vector(cur, mem_id, user_id, vector_blob)
             self._conn.commit()
 
         return Memory(
@@ -363,9 +408,14 @@ class SqliteBackend:
         user_id: str,
         top_k: int = 10,
         as_of: datetime | None = None,
+        query_vector: Sequence[float] | None = None,
     ) -> list[SearchResult]:
         if top_k <= 0:
             return []
+        if query_vector is not None:
+            fused = self._search_hybrid(query, user_id, top_k, as_of, query_vector)
+            if fused is not None:
+                return fused
         if self._fts:
             return self._search_fts(query, user_id, top_k, as_of)
         q_tokens = _tokens(query)
@@ -379,6 +429,165 @@ class SqliteBackend:
                 scored.append((score, mem))
         scored.sort(key=lambda kv: (-kv[0], kv[1].id))
         return [SearchResult(memory=m, score=s) for s, m in scored[:top_k]]
+
+    # ---- vectors and hybrid search -------------------------------
+
+    supports_vectors = True
+
+    def set_vector(self, memory_id: str, vector: Sequence[float]) -> bool:
+        """Store or replace the embedding of a live memory. Returns False
+        for an unknown or tombstoned id."""
+        blob = _unit_vector_bytes(vector)
+        with self._lock:
+            cur = self._conn.cursor()
+            row = cur.execute(
+                "SELECT user_id FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            self._write_vector(cur, memory_id, row[0], blob)
+            self._conn.commit()
+            return True
+
+    def memories_without_vectors(self, user_id: str | None = None) -> list[Memory]:
+        """Live memories that have no embedding stored, oldest first."""
+        sql = (
+            "SELECT * FROM memories WHERE id NOT IN "
+            "(SELECT memory_id FROM memory_vectors)"
+        )
+        params: list[Any] = []
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            params.append(user_id)
+        with self._lock:
+            cur = self._conn.cursor()
+            rows = cur.execute(sql + " ORDER BY t_valid", params).fetchall()
+            cols = [d[0] for d in cur.description]
+            return self._rows_to_memories(
+                [dict(zip(cols, r, strict=True)) for r in rows]
+            )
+
+    def _write_vector(
+        self, cur: sqlite3.Cursor, memory_id: str, user_id: str, blob: bytes
+    ) -> None:
+        cur.execute(
+            "INSERT INTO memory_vectors (memory_id, user_id, vector) VALUES (?, ?, ?) "
+            "ON CONFLICT(memory_id) DO UPDATE SET vector = excluded.vector",
+            (memory_id, user_id, blob),
+        )
+        self._vector_cache.pop(user_id, None)
+
+    def _drop_vector(self, cur: sqlite3.Cursor, memory_id: str) -> None:
+        row = cur.execute(
+            "SELECT user_id FROM memory_vectors WHERE memory_id = ?", (memory_id,)
+        ).fetchone()
+        if row is not None:
+            cur.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
+            self._vector_cache.pop(row[0], None)
+
+    def _vector_ranking(
+        self, user_id: str, query_vector: Sequence[float], limit: int
+    ) -> list[str]:
+        """Memory ids of ``user_id`` by cosine similarity to the query,
+        best first. Empty when the user has no vectors of that size."""
+        query = array("f", _unit_vector_bytes(query_vector))
+        cached = self._vector_cache.get(user_id)
+        if cached is None or cached[2] != len(query):
+            rows = self._conn.execute(
+                "SELECT memory_id, vector FROM memory_vectors WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+            # Vectors from a different embedding model cannot be compared.
+            rows = [r for r in rows if len(r[1]) == len(query) * query.itemsize]
+            ids = [r[0] for r in rows]
+            try:
+                import numpy as np
+            except ImportError:
+                vectors: Any = [array("f", r[1]) for r in rows]
+            else:
+                vectors = np.frombuffer(
+                    b"".join(r[1] for r in rows), dtype=np.float32
+                ).reshape(len(rows), len(query))
+            cached = (ids, vectors, len(query))
+            self._vector_cache[user_id] = cached
+        ids, vectors, _ = cached
+        if not ids:
+            return []
+        if isinstance(vectors, list):
+            scores = [sum(a * b for a, b in zip(v, query, strict=True)) for v in vectors]
+            order = sorted(range(len(ids)), key=lambda i: (-scores[i], ids[i]))
+        else:
+            import numpy as np
+
+            scores = vectors @ np.frombuffer(query.tobytes(), dtype=np.float32)
+            order = np.argsort(-scores, kind="stable").tolist()
+        return [ids[i] for i in order[:limit]]
+
+    def _lexical_ranking(self, query: str, user_id: str, limit: int) -> list[str]:
+        """Memory ids by lexical relevance, best first."""
+        if self._fts:
+            match = _fts_query(query)
+            if not match:
+                return []
+            rows = self._conn.execute(
+                "SELECT r.memory_id FROM memories_fts JOIN memories_fts_rows r "
+                "ON r.fts_rowid = memories_fts.rowid "
+                "WHERE memories_fts MATCH ? AND user_id = ? "
+                "ORDER BY bm25(memories_fts), r.memory_id LIMIT ?",
+                (match, user_id, limit),
+            ).fetchall()
+            return [r[0] for r in rows]
+        q_tokens = _tokens(query)
+        if not q_tokens:
+            return []
+        scored = [
+            (self._score(m, q_tokens), m.id)
+            for m in self._scan_for_user(user_id, as_of=None)
+        ]
+        return [i for s, i in sorted(scored, key=lambda p: (-p[0], p[1])) if s > 0][:limit]
+
+    def _search_hybrid(
+        self,
+        query: str,
+        user_id: str,
+        top_k: int,
+        as_of: datetime | None,
+        query_vector: Sequence[float],
+    ) -> list[SearchResult] | None:
+        """Fuse the lexical and vector rankings. Returns None when the
+        user has no comparable vectors, so the caller searches lexically."""
+        if as_of is not None and as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=UTC)
+        depth = max(_FUSION_DEPTH, top_k)
+        with self._lock:
+            by_vector = self._vector_ranking(user_id, query_vector, depth)
+            if not by_vector:
+                return None
+            by_words = self._lexical_ranking(query, user_id, depth)
+            fused: dict[str, float] = defaultdict(float)
+            for weight, ranking in (
+                (_LEXICAL_WEIGHT, by_words), (_VECTOR_WEIGHT, by_vector)
+            ):
+                for rank, memory_id in enumerate(ranking):
+                    fused[memory_id] += weight / (_RRF_K + rank)
+            ordered = sorted(fused, key=lambda i: (-fused[i], i))
+            if as_of is None:
+                ordered = ordered[:top_k]
+            memories = {m.id: m for m in self.get_batch(ordered)}
+        results: list[SearchResult] = []
+        for memory_id in ordered:
+            memory = memories.get(memory_id)
+            if memory is None:
+                continue
+            if as_of is not None and (
+                memory.t_valid > as_of
+                or (memory.t_invalid is not None and memory.t_invalid <= as_of)
+            ):
+                continue
+            results.append(SearchResult(memory=memory, score=fused[memory_id]))
+            if len(results) >= top_k:
+                break
+        return results
 
     def _search_fts(
         self, query: str, user_id: str, top_k: int, as_of: datetime | None
@@ -490,6 +699,7 @@ class SqliteBackend:
             cur.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
             deleted = cur.rowcount
             self._unindex(cur, memory_id)
+            self._drop_vector(cur, memory_id)
             cur.execute("DELETE FROM tombstones WHERE id = ?", (memory_id,))
             deleted += cur.rowcount
             cur.execute(
@@ -581,6 +791,7 @@ class SqliteBackend:
                 )
                 cur.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
                 self._unindex(cur, memory_id)
+                self._drop_vector(cur, memory_id)
                 self._conn.commit()
                 return True
 
@@ -675,6 +886,8 @@ class SqliteBackend:
             if self._fts:
                 cur.execute("DELETE FROM memories_fts")
                 cur.execute("DELETE FROM memories_fts_rows")
+            cur.execute("DELETE FROM memory_vectors")
+            self._vector_cache.clear()
             cur.execute("DELETE FROM tombstones")
             cur.execute("DELETE FROM events")
             cur.execute("DELETE FROM cite_events")

@@ -10,10 +10,9 @@ What the client deliberately does NOT own:
 - An answerer. The whole point of the SDK is that the caller brings
   their own LLM for downstream reasoning. `consolidate()` uses the
   caller's `llm_client` for the self-test step.
-- Embedding infrastructure. The default lexical retrieval works
-  reasonably well; embedding-based retrieval is an `[embeddings]`
-  extra. The shape of the eventual hook is `MemoryClient(embedder=...)`
-  — not implemented in v1.
+- An embedding model. Search is lexical (BM25) by default; pass
+  `MemoryClient(embedder=...)` to add a vector channel fused with it.
+  `myelin.embedders.StaticEmbedder` is a CPU-only choice.
 - Tools / agentic loop. This is a memory layer, not an agent harness.
   Wire myelin into Mem0 / Letta / OpenClaw / your own harness.
 
@@ -124,6 +123,7 @@ class MemoryClient:
         cite_learning: bool | None = None,
         working_memory: bool | None = None,
         clock: Callable[[], datetime] | None = None,
+        embedder: Any | None = None,
     ) -> None:
         """Construct a MemoryClient.
 
@@ -150,8 +150,18 @@ class MemoryClient:
         timestamp of ``cite()`` events. Pass one to replay a recorded
         history at its own dates (benchmarks, backfills, deterministic
         tests). Defaults to the current UTC time.
+
+        ``embedder`` turns on hybrid search: each memory is embedded when
+        it is written, each query when it is searched, and the vector
+        ranking is fused with the lexical one. It is anything with an
+        ``encode(text)`` method returning a sequence of floats, or a
+        callable doing the same (see :mod:`myelin.embedders`). Memories
+        written before an embedder was configured are found lexically
+        only until :meth:`backfill_embeddings` is run. If the embedder
+        raises, the write or search carries on without a vector.
         """
         self._clock = clock
+        self._embedder = embedder
         if isinstance(backend, str):
             if backend == "sqlite":
                 self._backend: Backend = SqliteBackend(db_path=db_path)
@@ -253,6 +263,41 @@ class MemoryClient:
         """Current time from the injected clock, as a tz-aware datetime."""
         now = self._clock() if self._clock is not None else datetime.now(UTC)
         return now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+
+    # ---- embeddings for hybrid search ---------------------------
+
+    def _vectors_enabled(self) -> bool:
+        return self._embedder is not None and bool(
+            getattr(self._backend, "supports_vectors", False)
+        )
+
+    def _embed(self, text: str) -> list[float] | None:
+        """Embed ``text``, or return None (after one warning) if the
+        embedder fails, so a model problem never blocks a write or search."""
+        encode = getattr(self._embedder, "encode", self._embedder)
+        try:
+            vector = [float(x) for x in encode(text)]
+        except Exception as exc:  # noqa: BLE001 — caller's model, anything goes
+            _warn_once(
+                "embedder_failed",
+                f"embedder failed ({type(exc).__name__}: {exc}); continuing "
+                "with lexical search only. This warning fires once.",
+            )
+            return None
+        return vector or None
+
+    def backfill_embeddings(self, *, user_id: str | None = None) -> int:
+        """Embed live memories that have no vector yet (for example those
+        written before an embedder was configured). Covers every user
+        unless ``user_id`` is given. Returns how many were embedded."""
+        if not self._vectors_enabled():
+            return 0
+        done = 0
+        for memory in self._backend.memories_without_vectors(user_id):
+            vector = self._embed(memory.content)
+            if vector is not None and self._backend.set_vector(memory.id, vector):
+                done += 1
+        return done
 
     # ---- salience: heuristic novelty wiring (B2, ADR-026) -------
 
@@ -409,6 +454,11 @@ class MemoryClient:
         if gate_meta:
             merged_metadata["_salience"] = gate_meta
 
+        extra: dict[str, Any] = {}
+        if self._vectors_enabled():
+            vector = self._embed(content)
+            if vector is not None:
+                extra["vector"] = vector
         return self._backend.add_memory(
             content=content,
             user_id=scope,
@@ -417,6 +467,7 @@ class MemoryClient:
             t_valid=t_valid if t_valid is not None else self._now(),
             confidence=confidence,
             importance=importance,
+            **extra,
         )
 
     @property
@@ -502,6 +553,13 @@ class MemoryClient:
         if as_of is not None and as_of.tzinfo is None:
             as_of = as_of.replace(tzinfo=UTC)
 
+        # Embed the query once, for the long-term tier's vector channel.
+        long_term_extra: dict[str, Any] = {}
+        if "long_term" in effective_modes and self._vectors_enabled():
+            query_vector = self._embed(query)
+            if query_vector is not None:
+                long_term_extra["query_vector"] = query_vector
+
         # ---- 4. Iterate tiers in order ----
         aggregated: list[SearchResult] = []
         seen_ids: set[str] = set()
@@ -528,6 +586,7 @@ class MemoryClient:
                 tier_hits = self._backend.search(
                     query=query, user_id=scope,
                     top_k=remaining, as_of=as_of,
+                    **long_term_extra,
                 )
                 hit_counter = "_n_hits_long_term"
 
@@ -896,6 +955,11 @@ class MemoryClient:
                 "salience_reason": decision.reason,
             }
 
+        extra: dict[str, Any] = {}
+        if self._vectors_enabled():
+            vector = self._embed(turn.content)
+            if vector is not None:
+                extra["vector"] = vector
         return self._backend.add_memory(
             content=turn.content,
             user_id=user_id,
@@ -903,6 +967,7 @@ class MemoryClient:
             event=None,
             confidence=0.5,
             importance=0.5,
+            **extra,
         )
 
     def attend(
@@ -981,9 +1046,14 @@ class MemoryClient:
 
         Raises KeyError if `memory_id` is unknown or tombstoned.
         """
-        return self._backend.update(
+        updated = self._backend.update(
             memory_id, content=content, metadata=metadata
         )
+        if content is not None and self._vectors_enabled():
+            vector = self._embed(content)
+            if vector is not None:
+                self._backend.set_vector(memory_id, vector)
+        return updated
 
     def delete(self, memory_id: str) -> bool:
         """Hard-delete a memory. Returns True if deleted, False if absent.

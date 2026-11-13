@@ -45,6 +45,11 @@ embeddings = [
     "sentence-transformers>=2.7",
     "numpy>=1.26",
 ]
+# CPU-only static embeddings for hybrid search (myelin.embedders.StaticEmbedder).
+static = [
+    "model2vec>=0.4",
+    "numpy>=1.26",
+]
 # Runtime path for the Memory-R1 contrastive utility backend.
 # Pinned across the ML-stack ABI surface so training+serving images
 # stay byte-compatible (lesson from
