@@ -35,6 +35,7 @@ import re
 import sqlite3
 import threading
 import uuid
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -135,6 +136,20 @@ def _tokens(text: str) -> set[str]:
         for t in _TOKEN_RE.findall(text)
         if t.lower() not in _STOPWORDS
     }
+
+
+# SQLite caps bound parameters per statement (999 on builds before
+# 3.32), so IN (...) lookups are issued in chunks below that limit.
+_MAX_SQL_PARAMS = 900
+
+
+def _chunks(items: list[str]) -> Iterator[list[str]]:
+    for start in range(0, len(items), _MAX_SQL_PARAMS):
+        yield items[start : start + _MAX_SQL_PARAMS]
+
+
+def _placeholders(n: int) -> str:
+    return ",".join("?" * n)
 
 
 def _dt_to_iso(dt: datetime | None) -> str | None:
@@ -294,16 +309,33 @@ class SqliteBackend:
         return [SearchResult(memory=m, score=s) for s, m in scored[:top_k]]
 
     def get(self, memory_id: str) -> Memory | None:
+        found = self.get_batch([memory_id])
+        return found[0] if found else None
+
+    def get_batch(self, memory_ids: Sequence[str]) -> list[Memory]:
+        """Fetch several memories by id without one query per id.
+
+        Returns live (non-tombstoned) memories in the order their ids
+        were first requested. Unknown and tombstoned ids are omitted,
+        and a repeated id yields one memory.
+        """
+        ids = list(dict.fromkeys(memory_ids))
+        if not ids:
+            return []
         with self._lock:
             cur = self._conn.cursor()
-            row = cur.execute(
-                "SELECT * FROM memories WHERE id = ? AND health_state != 'tombstoned'",
-                (memory_id,),
-            ).fetchone()
-            if row is None:
-                return None
-            cols = [d[0] for d in cur.description]
-            return self._row_to_memory(dict(zip(cols, row, strict=True)))
+            raw: list[dict[str, Any]] = []
+            for chunk in _chunks(ids):
+                rows = cur.execute(
+                    "SELECT * FROM memories WHERE id IN "
+                    f"({_placeholders(len(chunk))}) "
+                    "AND health_state != 'tombstoned'",
+                    chunk,
+                ).fetchall()
+                cols = [d[0] for d in cur.description]
+                raw.extend(dict(zip(cols, r, strict=True)) for r in rows)
+            by_id = {m.id: m for m in self._rows_to_memories(raw)}
+        return [by_id[i] for i in ids if i in by_id]
 
     def update(
         self,
@@ -361,9 +393,9 @@ class SqliteBackend:
                     (user_id,),
                 ).fetchall()
             cols = [d[0] for d in cur.description]
-            live = [
-                self._row_to_memory(dict(zip(cols, r, strict=True))) for r in rows
-            ]
+            live = self._rows_to_memories(
+                [dict(zip(cols, r, strict=True)) for r in rows]
+            )
             if not include_tombstoned:
                 return live
             # Tombstones table has an extra `tombstoned_at` column at the
@@ -374,10 +406,9 @@ class SqliteBackend:
                 (user_id,),
             ).fetchall()
             tomb_cols = [d[0] for d in cur.description]
-            tombstoned = [
-                self._row_to_memory(dict(zip(tomb_cols, r, strict=True)))
-                for r in tomb_rows
-            ]
+            tombstoned = self._rows_to_memories(
+                [dict(zip(tomb_cols, r, strict=True)) for r in tomb_rows]
+            )
             return live + tombstoned
 
     def transition_state(
@@ -559,8 +590,9 @@ class SqliteBackend:
             t_cmp = (
                 as_of.replace(tzinfo=UTC) if as_of and as_of.tzinfo is None else as_of
             )
-            for r in rows:
-                mem = self._row_to_memory(dict(zip(cols, r, strict=True)))
+            for mem in self._rows_to_memories(
+                [dict(zip(cols, r, strict=True)) for r in rows]
+            ):
                 if t_cmp is not None:
                     if mem.t_valid > t_cmp:
                         continue
@@ -579,18 +611,21 @@ class SqliteBackend:
         # fusion was added — good enough for the SDK's default backend.
         return overlap + 0.5 * (overlap / max(1, len(c_tokens)))
 
-    def _row_to_memory(self, row: dict[str, Any]) -> Memory:
-        event = None
-        ev_id = row.get("event_id")
-        if ev_id:
-            cur = self._conn.cursor()
-            ev_row = cur.execute(
-                "SELECT * FROM events WHERE event_id = ?", (ev_id,)
-            ).fetchone()
-            if ev_row is not None:
-                ev_cols = [d[0] for d in cur.description]
+    def _load_events(self, event_ids: Iterable[str]) -> dict[str, Event]:
+        """Load events by id, keyed by event_id. Unknown ids are absent."""
+        ids = list(dict.fromkeys(event_ids))
+        events: dict[str, Event] = {}
+        cur = self._conn.cursor()
+        for chunk in _chunks(ids):
+            ev_rows = cur.execute(
+                "SELECT * FROM events WHERE event_id IN "
+                f"({_placeholders(len(chunk))})",
+                chunk,
+            ).fetchall()
+            ev_cols = [d[0] for d in cur.description]
+            for ev_row in ev_rows:
                 ev = dict(zip(ev_cols, ev_row, strict=True))
-                event = Event(
+                events[ev["event_id"]] = Event(
                     event_id=ev["event_id"],
                     type=ev.get("type", "") or "",
                     anchor_datetime=_iso_to_dt(ev.get("anchor_datetime")),
@@ -602,6 +637,26 @@ class SqliteBackend:
                         json.loads(ev.get("evidence_turn_ids") or "[]")
                     ),
                 )
+        return events
+
+    def _rows_to_memories(self, rows: list[dict[str, Any]]) -> list[Memory]:
+        """Convert rows to memories, loading all their events up front
+        instead of issuing one event query per row."""
+        events = self._load_events(
+            r["event_id"] for r in rows if r.get("event_id")
+        )
+        return [self._row_to_memory(r, events) for r in rows]
+
+    def _row_to_memory(
+        self, row: dict[str, Any], events: dict[str, Event] | None = None
+    ) -> Memory:
+        ev_id = row.get("event_id")
+        if not ev_id:
+            event = None
+        elif events is not None:
+            event = events.get(ev_id)
+        else:
+            event = self._load_events([ev_id]).get(ev_id)
         return Memory(
             id=row["id"],
             content=row["content"],

@@ -573,10 +573,7 @@ class MemoryClient:
             return []
 
         scored: list[tuple[float, Memory]] = []
-        for mid in memory_ids:
-            memory = self._backend.get(mid)
-            if memory is None:
-                continue
+        for memory in self._get_many(memory_ids):
             if memory.user_id != user_id:
                 continue
             if as_of is not None:
@@ -591,6 +588,18 @@ class MemoryClient:
 
         scored.sort(key=lambda kv: (-kv[0], kv[1].id))
         return [SearchResult(memory=m, score=s) for s, m in scored[:top_k]]
+
+    def _get_many(self, memory_ids: list[str]) -> list[Memory]:
+        """Resolve ids to live memories, skipping unknown/tombstoned ones.
+
+        Uses the backend's ``get_batch`` when it has one; backends that
+        only implement ``get`` are looked up id by id.
+        """
+        get_batch = getattr(self._backend, "get_batch", None)
+        if callable(get_batch):
+            return list(get_batch(memory_ids))
+        found = (self._backend.get(mid) for mid in memory_ids)
+        return [m for m in found if m is not None]
 
     def _search_session_scope(
         self,
