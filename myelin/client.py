@@ -121,6 +121,7 @@ class MemoryClient:
         dmem_gate: Any | None = None,
         cite_learning: bool | None = None,
         working_memory: bool | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         """Construct a MemoryClient.
 
@@ -141,7 +142,14 @@ class MemoryClient:
 
         Turns that the gate drops still return a synthetic ``Memory`` with
         ``id=""`` so the caller can detect the drop without raising.
+
+        ``clock`` supplies "now" for the client: the default ``t_valid``
+        of ``add()``, the default ``now`` of ``prune()`` and the
+        timestamp of ``cite()`` events. Pass one to replay a recorded
+        history at its own dates (benchmarks, backfills, deterministic
+        tests). Defaults to the current UTC time.
         """
+        self._clock = clock
         if isinstance(backend, str):
             if backend == "sqlite":
                 self._backend: Backend = SqliteBackend(db_path=db_path)
@@ -239,6 +247,11 @@ class MemoryClient:
         self._n_hits_long_term = 0
         self._n_calls_with_working_hit = 0
 
+    def _now(self) -> datetime:
+        """Current time from the injected clock, as a tz-aware datetime."""
+        now = self._clock() if self._clock is not None else datetime.now(UTC)
+        return now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+
     # ---- salience: heuristic novelty wiring (B2, ADR-026) -------
 
     def _heuristic_embedder(self) -> Any | None:
@@ -304,6 +317,7 @@ class MemoryClient:
         confidence: float = 0.5,
         importance: float = 0.5,
         outcome: Mapping[str, object] | None = None,
+        t_valid: datetime | None = None,
     ) -> Memory:
         """Add a fact to the substrate.
 
@@ -323,6 +337,11 @@ class MemoryClient:
         `error`) threaded into the heuristic salience gate's reward axis.
         Only consulted in `salience_mode="heuristic"`; ignored otherwise.
         When omitted the reward signal is 0.0 (the PersonaMem default).
+
+        `t_valid` is when the fact became true. It defaults to the
+        client's clock (the current time); pass it when ingesting
+        history so `search(as_of=...)` and age-based health see the
+        fact at its real date. Naive values are read as UTC.
         """
         ev: Event | None
         if event is None:
@@ -393,6 +412,7 @@ class MemoryClient:
             user_id=scope,
             metadata=merged_metadata,
             event=ev,
+            t_valid=t_valid if t_valid is not None else self._now(),
             confidence=confidence,
             importance=importance,
         )
@@ -999,7 +1019,7 @@ class MemoryClient:
         """
         target_user = user_id or self._user_id
         if now is None:
-            now = datetime.now(UTC)
+            now = self._now()
         elif now.tzinfo is None:
             now = now.replace(tzinfo=UTC)
 
@@ -1136,7 +1156,7 @@ class MemoryClient:
             answer_correct=bool(answer_correct),
             session_id=session_id,
             query=safe_query,
-            now=datetime.now(UTC),
+            now=self._now(),
         )
 
         # Cite-session bridge — wires the working-set attend side

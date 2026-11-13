@@ -1,0 +1,44 @@
+{
+  "manifest": {
+    "benchmark": "LongMemEval",
+    "data_file": "longmemeval_s_cleaned.json",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "questions": 500,
+    "system": "myelin",
+    "granularity": "turn",
+    "top_k": 10,
+    "answerer": "",
+    "judge": "",
+    "prompt_version": "lme-answer-v1",
+    "temperature": 0.0,
+    "git_commit": "6c2a445e396a0a5c2df7527a27531d52458eb760",
+    "started_at": "2026-11-13T20:59:49+00:00"
+  },
+  "answered": 500,
+  "judged": 0,
+  "session_recall": {
+    "any@5": 0.9106382978723404,
+    "all@5": 0.6914893617021277,
+    "any@10": 0.9468085106382979,
+    "all@10": 0.8085106382978723,
+    "any@50": 0.9893617021276596,
+    "all@50": 0.9531914893617022,
+    "questions": 470,
+    "all@10_by_type": {
+      "single-session-user": 0.984375,
+      "single-session-assistant": 1.0,
+      "single-session-preference": 0.6333333333333333,
+      "multi-session": 0.5950413223140496,
+      "temporal-reasoning": 0.7874015748031497,
+      "knowledge-update": 0.9722222222222222
+    }
+  },
+  "cost": {
+    "answerer_prompt_tokens": 0,
+    "answerer_completion_tokens": 0,
+    "mean_context_tokens": null,
+    "mean_ingest_seconds": 0.2889220565959945,
+    "mean_retrieve_seconds": 0.2928830640319975,
+    "mean_answer_seconds": null
+  }
+}

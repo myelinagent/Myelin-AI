@@ -8,6 +8,23 @@ project uses semantic versioning.
 
 Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
+### Added
+
+- **Headless benchmark harness** (`bench/`, not part of the published
+  package). `python -m bench.longmemeval run` takes a memory system through
+  LongMemEval from one command: fresh store per question, retrieval recall,
+  pinned-prompt answers, grading with the benchmark's judge prompts,
+  per-question checkpoints and a run manifest. Ships a BM25 control and an
+  oracle control. Baseline numbers are in `bench/results/`.
+- **`add(t_valid=...)`** stores a fact at the time it became true instead of
+  the time it was written, so recorded history can be ingested at its real
+  dates.
+- **`MemoryClient(clock=...)`** supplies "now" for `add()`, `prune()` and
+  `cite()`, for replaying history and for deterministic runs.
+- **Sidecar `--db-path`** (and `build_server(db_path=...)`) keeps memories in
+  a SQLite file instead of in memory; `/admin/reset` clears it.
+- **Test workflow** runs the suite on pull requests and pushes to `main`.
+
 ### Fixed
 
 - **`prune()` no longer removes the current value of an updated fact.** When
