@@ -365,12 +365,19 @@ class SqliteBackend:
     def delete(self, memory_id: str) -> bool:
         # Hard delete — for caller-initiated removal. Apoptosis uses
         # `transition_state(... new_state='tombstoned')` which preserves
-        # the audit trail.
+        # the audit trail; an explicit delete removes that trail too, so
+        # the content and its cite history are gone from every table.
         with self._lock:
             cur = self._conn.cursor()
             cur.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            deleted = cur.rowcount
+            cur.execute("DELETE FROM tombstones WHERE id = ?", (memory_id,))
+            deleted += cur.rowcount
+            cur.execute(
+                "DELETE FROM cite_events WHERE memory_id = ?", (memory_id,)
+            )
             self._conn.commit()
-            return cur.rowcount > 0
+            return deleted > 0
 
     def list_memories(
         self,

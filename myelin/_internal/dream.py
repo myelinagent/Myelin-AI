@@ -207,6 +207,10 @@ def run_dream_cycle(
             answer = answer_func(prompt)
         except Exception:  # noqa: BLE001 — caller's LLM, anything goes
             answer = ""
+        if not isinstance(answer, str):
+            # An answerer that returns a response object rather than
+            # text cannot be graded; count it as a miss.
+            answer = ""
         report.llm_calls += 1
         if grade_hit(answer, memory):
             hits += 1

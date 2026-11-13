@@ -27,7 +27,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -229,6 +229,9 @@ class MemoryClient:
         # working-tier hits the call produced. The rate is the latter
         # divided by total session-scoped calls so the metric stays in
         # [0, 1].
+        # Where the next consolidate() starts sampling, per user.
+        self._consolidate_cursor: dict[str, int] = {}
+
         self._n_search_calls = 0
         self._n_search_with_session = 0
         self._n_hits_working = 0
@@ -472,6 +475,10 @@ class MemoryClient:
             effective_modes = modes
 
         scope = user_id or self._user_id
+        # Every tier compares against tz-aware timestamps, so a naive
+        # ``as_of`` is read as UTC here rather than per tier.
+        if as_of is not None and as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=UTC)
 
         # ---- 4. Iterate tiers in order ----
         aggregated: list[SearchResult] = []
@@ -651,9 +658,16 @@ class MemoryClient:
         *,
         session_id: str,
         metadata: dict | None = None,
+        user_id: str | None = None,
     ) -> ObservedTurn:
         """Record a turn into the session ring buffer WITHOUT
         persisting it to the long-term substrate.
+
+        ``user_id`` scopes a session this call creates (default: the
+        client's ``user_id``). A session keeps the user it was created
+        for, and ``commit()`` stores its turns under that user; passing
+        a different ``user_id`` for an existing session raises
+        ``ValueError`` rather than mixing two users' turns.
 
         ``commit(turn_ids, session_id=...)`` promotes observed turns
         into the long-term substrate. Until commit(), the turn is RAM-
@@ -672,7 +686,7 @@ class MemoryClient:
                 "constructor kwarg not set). Falling back to add() so "
                 "callers can migrate gradually. This warning fires once.",
             )
-            mem = self.add(content, metadata=metadata)
+            mem = self.add(content, metadata=metadata, user_id=user_id)
             return ObservedTurn(
                 turn_id=mem.id,
                 content=content,
@@ -685,8 +699,13 @@ class MemoryClient:
             raise ValueError("observe() requires a non-empty session_id")
 
         state = self._session_registry.get_or_create(
-            session_id=session_id, user_id=self._user_id
+            session_id=session_id, user_id=user_id or self._user_id
         )
+        if user_id is not None and state.user_id != user_id:
+            raise ValueError(
+                f"session {session_id!r} belongs to user "
+                f"{state.user_id!r}; cannot observe as {user_id!r}"
+            )
         turn_id = _new_turn_id()
         return state.append_observed(
             turn_id=turn_id, content=content, metadata=metadata
@@ -704,6 +723,11 @@ class MemoryClient:
         only commit() pays for the LLM judge, not every observe()).
         Each promoted memory is auto-attended into the session working
         set.
+
+        Memories are stored under the session's user. If persisting a
+        turn fails, that turn and the ones after it go back into the
+        session buffer and the error propagates, so the call can be
+        retried; turns already stored stay stored.
 
         Raises:
             RuntimeError: working memory disabled.
@@ -729,67 +753,79 @@ class MemoryClient:
         drained = state.drain_observed(turn_ids)
 
         committed: list[Memory] = []
-        for turn in drained:
-            merged_metadata = dict(turn.metadata or {})
-            merged_metadata["_session_id"] = session_id
-
-            # Salience gate at commit time (NFR-B3).
-            if self._salience_mode == "heuristic":
-                turn_outcome = (turn.metadata or {}).get("outcome")
-                q_emb, neighbors = self._heuristic_novelty_inputs(
-                    turn.content, state.user_id
-                )
-                decision = score_turn_heuristic(
-                    text=turn.content,
-                    outcome=turn_outcome,
-                    query_embedding=q_emb,
-                    neighbor_embeddings=neighbors,
-                    gate=self._heuristic_gate,
-                )
-                if not decision.tag:
-                    # Dropped by salience; do NOT persist. Counted in
-                    # the same telemetry as add()-side drops.
-                    self._n_add_dropped += 1
-                    continue
-                merged_metadata["_salience"] = {
-                    "salience_mode": "heuristic",
-                    "salience_score": decision.score,
-                    "salience_tag": decision.tag,
-                    "salience_reason": decision.reason,
-                    "salience_novelty": decision.bundle.novelty if decision.bundle else None,
-                    "salience_reward": decision.bundle.reward if decision.bundle else None,
-                }
-            elif self._salience_mode == "dmem":
-                assert self._dmem_gate is not None
-                decision = self._dmem_gate.evaluate(
-                    content=turn.content, user_id=self._user_id
-                )
-                if not decision.tag:
-                    self._n_add_dropped += 1
-                    continue
-                merged_metadata["_salience"] = {
-                    "salience_mode": "dmem",
-                    "salience_utility_class": decision.utility_class,
-                    "salience_utility_score": decision.utility_score,
-                    "salience_surprise_z": decision.surprise_zscore,
-                    "salience_rpe": decision.rpe,
-                    "salience_tag": decision.tag,
-                    "salience_cached": decision.cached,
-                    "salience_reason": decision.reason,
-                }
-
-            mem = self._backend.add_memory(
-                content=turn.content,
-                user_id=self._user_id,
-                metadata=merged_metadata,
-                event=None,
-                confidence=0.5,
-                importance=0.5,
-            )
-            committed.append(mem)
-            state.attend(memory_id=mem.id)
+        for index, turn in enumerate(drained):
+            try:
+                mem = self._commit_turn(turn, state.user_id, session_id)
+            except BaseException:
+                state.restore_observed(drained[index:])
+                raise
+            if mem is not None:
+                committed.append(mem)
+                state.attend(memory_id=mem.id)
 
         return committed
+
+    def _commit_turn(
+        self, turn: ObservedTurn, user_id: str, session_id: str
+    ) -> Memory | None:
+        """Gate and persist one observed turn. Returns ``None`` when the
+        salience gate drops it."""
+        merged_metadata = dict(turn.metadata or {})
+        merged_metadata["_session_id"] = session_id
+
+        # Salience gate at commit time (NFR-B3).
+        if self._salience_mode == "heuristic":
+            turn_outcome = (turn.metadata or {}).get("outcome")
+            q_emb, neighbors = self._heuristic_novelty_inputs(
+                turn.content, user_id
+            )
+            decision = score_turn_heuristic(
+                text=turn.content,
+                outcome=turn_outcome,
+                query_embedding=q_emb,
+                neighbor_embeddings=neighbors,
+                gate=self._heuristic_gate,
+            )
+            if not decision.tag:
+                # Dropped by salience; do NOT persist. Counted in
+                # the same telemetry as add()-side drops.
+                self._n_add_dropped += 1
+                return None
+            merged_metadata["_salience"] = {
+                "salience_mode": "heuristic",
+                "salience_score": decision.score,
+                "salience_tag": decision.tag,
+                "salience_reason": decision.reason,
+                "salience_novelty": decision.bundle.novelty if decision.bundle else None,
+                "salience_reward": decision.bundle.reward if decision.bundle else None,
+            }
+        elif self._salience_mode == "dmem":
+            assert self._dmem_gate is not None
+            decision = self._dmem_gate.evaluate(
+                content=turn.content, user_id=user_id
+            )
+            if not decision.tag:
+                self._n_add_dropped += 1
+                return None
+            merged_metadata["_salience"] = {
+                "salience_mode": "dmem",
+                "salience_utility_class": decision.utility_class,
+                "salience_utility_score": decision.utility_score,
+                "salience_surprise_z": decision.surprise_zscore,
+                "salience_rpe": decision.rpe,
+                "salience_tag": decision.tag,
+                "salience_cached": decision.cached,
+                "salience_reason": decision.reason,
+            }
+
+        return self._backend.add_memory(
+            content=turn.content,
+            user_id=user_id,
+            metadata=merged_metadata,
+            event=None,
+            confidence=0.5,
+            importance=0.5,
+        )
 
     def attend(
         self,
@@ -887,6 +923,7 @@ class MemoryClient:
         *,
         user_id: str | None = None,
         max_samples: int = 32,
+        retriever: Callable[[str], Iterable[str]] | None = None,
     ) -> ConsolidationReport:
         """Trigger F-ML-2 dream-synthesis self-test.
 
@@ -904,15 +941,32 @@ class MemoryClient:
         can verify the sampling step ran.
 
         `max_samples` caps the number of facts self-tested this call
-        (each fact generates 3 dream queries by default).
+        (each fact generates 3 dream queries by default). Successive
+        calls walk through the user's facts oldest-first and wrap
+        around, so repeated consolidation covers the whole store rather
+        than re-testing the same oldest facts.
+
+        `retriever` grounds the self-test in the store: a callable that
+        takes a dream query and returns context snippets to show the
+        answerer, e.g. ``lambda q: [r.memory.content for r in
+        client.search(q, top_k=5)]``. Without it the answerer sees only
+        the query.
         """
+        scope = user_id or self._user_id
         memories = self._backend.list_memories(
-            user_id=user_id or self._user_id, only_healthy=True
+            user_id=scope, only_healthy=True
         )
+        if memories and max_samples > 0:
+            start = self._consolidate_cursor.get(scope, 0) % len(memories)
+            memories = memories[start:] + memories[:start]
+            self._consolidate_cursor[scope] = start + min(
+                max_samples, len(memories)
+            )
         return run_dream_cycle(
             memories=memories,
             llm_client=self._llm_client,
             max_samples=max_samples,
+            retriever=retriever,
         )
 
     def prune(

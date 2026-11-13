@@ -349,7 +349,7 @@ client.abstain_event(query, *, at=None) -> None
 client.cite_telemetry() -> dict
 
 # Session-scoped working memory (1.2 — opt in via MYELIN_WORKING_MEMORY=1)
-client.observe(content, *, session_id, metadata=None) -> ObservedTurn
+client.observe(content, *, session_id, metadata=None, user_id=None) -> ObservedTurn
 client.commit(turn_ids, *, session_id) -> list[Memory]
 client.attend(memory_id, *, session_id) -> None
 client.session(session_id) -> SessionHandle

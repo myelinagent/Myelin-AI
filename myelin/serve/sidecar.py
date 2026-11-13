@@ -19,12 +19,23 @@ import logging
 import threading
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from typing import Any
 
 from myelin import MemoryClient
 
 logger = logging.getLogger(__name__)
+
+
+# A connection that goes quiet for this long is dropped, and a request body
+# larger than the cap is refused, so one slow or oversized client cannot tie
+# up the server.
+_SOCKET_TIMEOUT_SECONDS = 30
+_MAX_BODY_BYTES = 8 * 1024 * 1024
+
+
+class _NotFoundError(LookupError):
+    """The request named a memory that does not exist."""
 
 
 # ---- state ---------------------------------------------------------------
@@ -115,11 +126,15 @@ def tool_memory_store(payload: dict) -> Any:
 
 def tool_memory_update(payload: dict) -> Any:
     client = _get_client()
-    mem = client.update(
-        memory_id=payload["memory_id"],
-        content=payload.get("content"),
-        metadata=payload.get("metadata"),
-    )
+    memory_id = payload["memory_id"]
+    try:
+        mem = client.update(
+            memory_id=memory_id,
+            content=payload.get("content"),
+            metadata=payload.get("metadata"),
+        )
+    except KeyError:
+        raise _NotFoundError(f"memory {memory_id!r} not found") from None
     return {"memory": _to_jsonable(mem)}
 
 
@@ -211,6 +226,9 @@ _ROUTES = {
 
 
 class _Handler(BaseHTTPRequestHandler):
+    # Applied to the connection by StreamRequestHandler.setup().
+    timeout = _SOCKET_TIMEOUT_SECONDS
+
     def log_message(self, fmt: str, *args: Any) -> None:
         logger.info("%s - %s", self.client_address[0], fmt % args)
 
@@ -234,10 +252,29 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         try:
             length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._write_json(400, {"error": "bad Content-Length"})
+            return
+        if length < 0:
+            self._write_json(400, {"error": "bad Content-Length"})
+            return
+        if length > _MAX_BODY_BYTES:
+            self.close_connection = True
+            self._write_json(413, {"error": "request body too large"})
+            return
+        try:
             raw = self.rfile.read(length) if length else b""
+        except OSError:
+            # The client stalled or dropped mid-body; nothing to answer.
+            self.close_connection = True
+            return
+        try:
             payload = json.loads(raw or b"{}")
-        except (ValueError, json.JSONDecodeError) as exc:
+        except ValueError as exc:
             self._write_json(400, {"error": f"bad json: {exc}"})
+            return
+        if not isinstance(payload, dict):
+            self._write_json(400, {"error": "request body must be a JSON object"})
             return
 
         if self.path == "/admin/reset":
@@ -255,6 +292,8 @@ class _Handler(BaseHTTPRequestHandler):
             result = handler(payload)
             _bump_counter("tool_invocations")
             self._write_json(200, result)
+        except _NotFoundError as exc:
+            self._write_json(404, {"error": str(exc)})
         except KeyError as exc:
             self._write_json(400, {"error": f"missing field: {exc}"})
         except Exception as exc:  # noqa: BLE001
@@ -270,7 +309,11 @@ def build_server(host: str = "127.0.0.1", port: int = 8765) -> HTTPServer:
     running on a background thread for tests.
     """
     _get_client()  # prime the singleton
-    return HTTPServer((host, port), _Handler)
+    server = ThreadingHTTPServer((host, port), _Handler)
+    # Requests are handled on their own threads so a slow client does not
+    # block the rest; daemon threads let the process exit without waiting.
+    server.daemon_threads = True
+    return server
 
 
 def main() -> None:

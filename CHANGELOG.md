@@ -4,6 +4,45 @@ All notable changes to the `myelin-ai` Python SDK are documented here. Format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the
 project uses semantic versioning.
 
+## [Unreleased]
+
+Stability pass: crash, stall and data-loss paths found in a whole-repo review.
+
+### Fixed
+
+- **`prune()` no longer removes the current value of an updated fact.** When
+  a single-valued fact is written again with a different object, only the
+  older memory is penalized as contradicted; the newer one supersedes it and
+  stays healthy. Previously both were quarantined and tombstoned. Facts with
+  an identical `t_valid` still contradict each other.
+- **`commit()` no longer loses turns when a write fails part-way.** Turns
+  that were not stored go back into the session buffer and the error
+  propagates, so the call can be retried.
+- **`commit()` stores memories under the session's user**, not the client's
+  default user. `observe()` gains an optional `user_id=`; passing a different
+  user for an existing session raises `ValueError`.
+- **`search(as_of=<naive datetime>)` no longer raises `TypeError`** when the
+  working tier is searched; naive values are read as UTC in every tier.
+- **`consolidate()` accepts `retriever=`** as the README documents, and
+  successive calls rotate through the store instead of re-testing the same
+  oldest `max_samples` facts. A non-text answer from the answerer counts as a
+  miss instead of raising.
+- **HTTP sidecar no longer freezes on one stalled client.** Requests are
+  served on threads with a 30 s socket timeout and an 8 MB body cap. Non-object
+  JSON bodies return 400 and an unknown `memory_id` on update returns 404.
+- **`OrchestratedAgent` survives malformed tool arguments** from the model
+  (reported back as a tool error; `top_k` is clamped to 1–50) and its OpenAI
+  client now has a 60 s timeout.
+
+### Changed
+
+- **`delete()` also removes tombstoned rows and the memory's cite events**, so
+  an explicit delete leaves no copy of the content behind. It returns `True`
+  when a tombstoned memory was removed.
+- **Mem0 adapter `delete_all()` requires a filter** (`user_id`, `agent_id` or
+  `run_id`) and raises `ValueError` without one; use `reset()` to empty the
+  store. Tombstoned memories in scope are deleted too.
+
 ## [1.4.0] — 2026-06-09
 
 Three bug fixes to load-bearing mechanisms (D-MEM surprise, dream grader,
