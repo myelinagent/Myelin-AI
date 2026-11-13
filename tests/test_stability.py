@@ -8,7 +8,7 @@ import socket
 import threading
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -36,6 +36,61 @@ def test_naive_as_of_works_in_working_tier():
             "Melanie", session_id="s1", modes=("working",),
             as_of=datetime(2000, 1, 1),  # noqa: DTZ001
         ) == []
+    finally:
+        c.close()
+
+
+# ---- prune: a newer fact supersedes the older one ---------------------
+
+
+def _fact(client: MemoryClient, city: str, *, days_ago: int = 0):
+    mem = client.add(
+        f"Scott lives in {city}",
+        metadata={"subject": "scott", "predicate": "lives_in", "object": city},
+    )
+    if days_ago:
+        stamp = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
+        backend = client._backend
+        with backend._lock:
+            backend._conn.execute(
+                "UPDATE memories SET t_valid = ? WHERE id = ?", (stamp, mem.id)
+            )
+            backend._conn.commit()
+    return mem
+
+
+def test_prune_keeps_the_newer_of_two_contradicting_facts():
+    c = MemoryClient(user_id="u")
+    try:
+        old = _fact(c, "Paris", days_ago=2)
+        new = _fact(c, "Berlin")
+        first = c.prune()
+        assert (first.quarantined_count, first.retained_count) == (1, 1)
+        later = c.prune(now=datetime.now(UTC) + timedelta(days=8))
+        assert later.tombstoned_count == 1
+        assert c.get(old.id) is None
+        assert c.get(new.id).health_state == "healthy"
+        hits = c.search("Where does Scott live")
+        assert [h.memory.id for h in hits] == [new.id]
+    finally:
+        c.close()
+
+
+def test_prune_keeps_only_the_latest_of_a_chain_of_updates():
+    c = MemoryClient(user_id="u")
+    try:
+        paris = _fact(c, "Paris", days_ago=3)
+        berlin = _fact(c, "Berlin", days_ago=2)
+        back_to_paris = _fact(c, "Paris")
+        c.prune()
+        states = {
+            m.id: m.health_state for m in c._backend.list_memories(user_id="u")
+        }
+        assert states == {
+            paris.id: "quarantined",
+            berlin.id: "quarantined",
+            back_to_paris.id: "healthy",
+        }
     finally:
         c.close()
 

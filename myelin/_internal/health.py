@@ -106,8 +106,8 @@ def memory_health(
 
     Health is driven by:
     - age in days (older = less healthy; sharply penalized past 30 days)
-    - contradiction_count: other active memories on (subject, predicate)
-      with a different normalized object
+    - contradiction_count: active memories on (subject, predicate) with
+      a different normalized object that are not older than this one
     - confidence (lower = less healthy)
     - importance (lower = less healthy, weakly)
     - v1.2 cite-correct count (log-compressed positive lift)
@@ -158,8 +158,14 @@ def is_quarantine_candidate(
 
 
 def compute_contradiction_counts(memories: list["Memory"]) -> dict[str, int]:
-    """For each Memory by id, count other active memories that share
-    (subject, predicate) but have a different normalized content.
+    """For each Memory by id, count the active memories that supersede
+    it: same (subject, predicate), a different normalized object, and
+    not older than it.
+
+    A newer fact supersedes an older one, so updating a single-valued
+    fact penalizes only the stale value and the current value keeps a
+    count of zero. Facts with the same ``t_valid`` cannot be ordered and
+    contradict each other.
 
     For the SDK we don't have an explicit (subject, predicate, object)
     schema — facts are free-form content strings. We approximate the
@@ -190,11 +196,18 @@ def compute_contradiction_counts(memories: list["Memory"]) -> dict[str, int]:
         if len(bucket) < 2:
             continue
         norms = [_normalize(m.metadata.get("object", m.content)) for m in bucket]
+        stamps = [_as_utc(m.t_valid) for m in bucket]
         for i, m in enumerate(bucket):
             counts[m.id] = sum(
-                1 for j, n in enumerate(norms) if i != j and n != norms[i]
+                1
+                for j, n in enumerate(norms)
+                if i != j and n != norms[i] and stamps[j] >= stamps[i]
             )
     return counts
+
+
+def _as_utc(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
 # Multi-value predicates — predicates where a single subject can hold

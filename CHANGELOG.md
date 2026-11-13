@@ -10,6 +10,11 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Fixed
 
+- **`prune()` no longer removes the current value of an updated fact.** When
+  a single-valued fact is written again with a different object, only the
+  older memory is penalized as contradicted; the newer one supersedes it and
+  stays healthy. Previously both were quarantined and tombstoned. Facts with
+  an identical `t_valid` still contradict each other.
 - **`commit()` no longer loses turns when a write fails part-way.** Turns
   that were not stored go back into the session buffer and the error
   propagates, so the call can be retried.
