@@ -338,21 +338,34 @@ class MemoryClient:
     ) -> dict[str, Any]:
         """Delete every memory matching the given scope filters.
 
-        At least one of ``user_id``, ``agent_id``, or ``run_id`` should
-        be provided to scope the operation. Returns a Mem0-shaped ack
-        dict with the count of deletions.
+        At least one of ``user_id``, ``agent_id``, or ``run_id`` is
+        required; an unscoped call raises ``ValueError`` (use
+        :meth:`reset` to empty the whole substrate). Tombstoned memories
+        in scope are deleted too. Returns a Mem0-shaped ack dict with
+        the count of deletions.
         """
+        if user_id is None and agent_id is None and run_id is None:
+            raise ValueError(
+                "delete_all() requires at least one of user_id, agent_id "
+                "or run_id; call reset() to delete everything"
+            )
         backend = self._client._backend
         candidates: list[Memory] = []
         if user_id is not None:
-            candidates = backend.list_memories(user_id=user_id)
+            candidates = backend.list_memories(
+                user_id=user_id, include_tombstoned=True
+            )
         else:
             # No user_id given — Mem0 allows agent_id-only / run_id-only
             # deletion. Walk all users by inspecting the metadata; the
             # SqliteBackend can list a single user at a time, so we
             # discover users by scanning the memories table once.
             for uid in _all_user_ids(backend):
-                candidates.extend(backend.list_memories(user_id=uid))
+                candidates.extend(
+                    backend.list_memories(
+                        user_id=uid, include_tombstoned=True
+                    )
+                )
         deleted = 0
         for mem in candidates:
             if not _scope_filter(
@@ -465,6 +478,6 @@ def _all_user_ids(backend: Any) -> list[str]:
     with lock:
         cur = conn.cursor()
         rows = cur.execute(
-            "SELECT DISTINCT user_id FROM memories"
+            "SELECT user_id FROM memories UNION SELECT user_id FROM tombstones"
         ).fetchall()
     return [r[0] for r in rows]

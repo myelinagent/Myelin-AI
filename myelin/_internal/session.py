@@ -156,6 +156,23 @@ class SessionState:
             self.last_active_at = datetime.now(UTC)
             return drained
 
+    def restore_observed(self, turns: list[ObservedTurn]) -> None:
+        """Put drained turns back into the buffer, in observation order.
+
+        Used when persisting drained turns fails part-way: the turns
+        that were not stored become committable again.
+        """
+        if not turns:
+            return
+        with self.lock:
+            merged = sorted(
+                [*self.observed_buffer, *turns], key=lambda t: t.monotonic
+            )
+            self.observed_buffer = deque(
+                merged, maxlen=self.observed_buffer.maxlen
+            )
+            self.n_committed = max(0, self.n_committed - len(turns))
+
 
 class SessionRegistry:
     """Process-singleton registry of active sessions.

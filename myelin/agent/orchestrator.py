@@ -35,6 +35,14 @@ DEFAULT_PRICES: dict[str, tuple[float, float]] = {
 }
 
 
+_OPENAI_TIMEOUT_SECONDS = 60.0
+_OPENAI_MAX_RETRIES = 2
+
+# Bounds for the model-supplied ``top_k`` of a memory_search tool call.
+_TOOL_DEFAULT_TOP_K = 5
+_TOOL_MAX_TOP_K = 50
+
+
 # ---------- Memory tool surface exposed to the LLM ------------------------
 
 _MEMORY_SEARCH_TOOL_OPENAI = {
@@ -148,7 +156,13 @@ class OrchestratedAgent:
             api_key = os.environ.get("OPENAI_API_KEY")
             if not api_key:
                 raise RuntimeError("OPENAI_API_KEY missing")
-            return OpenAI(api_key=api_key)
+            # Bounded like the Gemini client below: without an explicit
+            # timeout the SDK waits 10 minutes per attempt on a hung socket.
+            return OpenAI(
+                api_key=api_key,
+                timeout=_OPENAI_TIMEOUT_SECONDS,
+                max_retries=_OPENAI_MAX_RETRIES,
+            )
         if provider == "google":
             from google import genai  # type: ignore
             from google.genai import types  # type: ignore
@@ -419,19 +433,28 @@ class OrchestratedAgent:
         user_id: str,
     ) -> str:
         """Execute a memory tool call from the LLM and return rendered text."""
-        if isinstance(arguments, str):
+        # Arguments come from the model, so anything malformed is
+        # reported back to it as a tool error instead of raising.
+        args = arguments
+        if isinstance(args, str):
             try:
-                args = json.loads(arguments or "{}")
+                args = json.loads(args or "{}")
             except json.JSONDecodeError:
                 args = {}
-        else:
-            args = dict(arguments or {})
+        try:
+            args = dict(args or {})
+        except (TypeError, ValueError):
+            args = {}
         if tool_name != "memory_search":
             return f"unknown tool {tool_name}"
-        query = args.get("query") or ""
-        top_k = int(args.get("top_k", 5))
-        if not query:
+        query = args.get("query")
+        if not isinstance(query, str) or not query:
             return "memory_search error: missing query"
+        try:
+            top_k = int(args.get("top_k", _TOOL_DEFAULT_TOP_K))
+        except (TypeError, ValueError):
+            top_k = _TOOL_DEFAULT_TOP_K
+        top_k = max(1, min(top_k, _TOOL_MAX_TOP_K))
         try:
             hits = self._memory.search(
                 query=query, user_id=user_id, top_k=top_k,
