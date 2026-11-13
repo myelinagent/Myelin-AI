@@ -19,6 +19,7 @@ What the client deliberately does NOT own:
 
 Method surface (the 7):
 - `add` / `search` / `get` / `update` / `delete`  — CRUD-ish
+  (`recall` is `search` sized to a token budget)
 - `consolidate`  — F-ML-2 dream-synthesis
 - `prune`        — P3 apoptosis (quarantine → tombstone)
 """
@@ -47,6 +48,7 @@ from myelin._internal.salience import (
 from myelin._internal.session import SessionRegistry, _new_turn_id
 from myelin.backend import Backend
 from myelin.backends.sqlite import SqliteBackend
+from myelin.context import fit_to_budget
 from myelin.types import (
     ApoptosisReport,
     ConsolidationReport,
@@ -563,6 +565,41 @@ class MemoryClient:
                 session_state.attend(memory_id=hit.memory.id)
 
         return aggregated
+
+    def recall(
+        self,
+        query: str,
+        *,
+        token_budget: int = 6000,
+        max_results: int = 100,
+        user_id: str | None = None,
+        as_of: datetime | None = None,
+        session_id: str | None = None,
+        modes: tuple[str, ...] = ("long_term",),
+    ) -> list[SearchResult]:
+        """Search, keeping as many top results as fit in ``token_budget``.
+
+        Use this to build context for an answering model: a budget gives
+        a predictable prompt size whatever the length of the memories,
+        where a fixed ``top_k`` returns too little for short memories and
+        too much for long ones. Results come back best first; pass them
+        to :func:`myelin.format_context` to render them.
+
+        At least one result is returned when anything matches, and never
+        more than ``max_results``. The other arguments are those of
+        :meth:`search`.
+        """
+        if token_budget <= 0:
+            raise ValueError(f"token_budget must be positive, got {token_budget}")
+        hits = self.search(
+            query,
+            user_id=user_id,
+            top_k=max_results,
+            as_of=as_of,
+            session_id=session_id,
+            modes=modes,
+        )
+        return fit_to_budget(hits, token_budget)
 
     def _search_working_set(
         self,

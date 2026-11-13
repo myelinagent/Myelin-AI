@@ -24,6 +24,12 @@ Full run with answers and grading:
 python -m bench.longmemeval run --system myelin --data longmemeval_s_cleaned.json --out bench/runs/myelin-qa --answerer gpt-4o-mini --judge gpt-4o
 ```
 
+Size the answerer's context by tokens instead of a fixed 10 turns:
+
+```bash
+python -m bench.longmemeval run --system myelin --data longmemeval_s_cleaned.json --out bench/runs/myelin-6k --token-budget 6000
+```
+
 Compare runs:
 
 ```bash
@@ -34,7 +40,7 @@ python -m bench.longmemeval report bench/runs/myelin bench/runs/bm25
 
 | `--system` | What it is |
 |---|---|
-| `myelin` | Myelin as shipped: one memory per turn, default `search()` |
+| `myelin` | Myelin as shipped: one memory per turn, default `search()` ranking |
 | `bm25` | Control: textbook BM25 over the same turns |
 | `oracle` | Control: the answerer is handed exactly the evidence sessions (reader ceiling) |
 
@@ -63,7 +69,8 @@ OpenRouter).
 
 Runs are checkpointed per question: rerunning the same command continues an
 interrupted run and retries failed calls. A run directory is tied to its
-settings; changing the system, top-k, answerer or dataset needs a new `--out`.
+settings; changing the system, top-k, token budget, answerer or dataset needs
+a new `--out`.
 
 ### Rules for comparable numbers
 

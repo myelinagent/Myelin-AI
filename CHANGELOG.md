@@ -8,14 +8,33 @@ project uses semantic versioning.
 
 Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
+### Changed
+
+- **Search ranks with BM25 over a SQLite full-text index, with word
+  stemming.** It replaces the unweighted token-overlap scan: rare words now
+  count for more than common ones, "graduate" matches "graduated", and a
+  query no longer re-reads every stored memory. Existing stores are indexed
+  the first time they are opened. `SearchResult.score` is now a BM25 score
+  (higher is better, not comparable with earlier values). On a SQLite built
+  without FTS5 the previous scan is used. On LongMemEval-S, the share of
+  questions with all evidence in the top 10 rose from 80.9% to 86.0% and
+  search time fell from 293 ms to 7 ms per question
+  (`bench/results/longmemeval_s_stage1.md`).
+
 ### Added
 
+- **`recall(query, token_budget=6000)`** returns as many top results as fit
+  a token budget, for building an answering model's context. With it, 90.9%
+  of LongMemEval-S questions have all their evidence in context.
+- **`format_context(results)`** renders results oldest first under date
+  headings; `fit_to_budget` and `estimate_tokens` are exported with it.
 - **Headless benchmark harness** (`bench/`, not part of the published
   package). `python -m bench.longmemeval run` takes a memory system through
   LongMemEval from one command: fresh store per question, retrieval recall,
   pinned-prompt answers, grading with the benchmark's judge prompts,
   per-question checkpoints and a run manifest. Ships a BM25 control and an
-  oracle control. Baseline numbers are in `bench/results/`.
+  oracle control, and `--token-budget` to size the answerer's context.
+  Baseline numbers are in `bench/results/`.
 - **`add(t_valid=...)`** stores a fact at the time it became true instead of
   the time it was written, so recorded history can be ingested at its real
   dates.
