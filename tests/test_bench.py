@@ -1,0 +1,233 @@
+"""The headless benchmark harness, exercised on a tiny synthetic dataset."""
+
+from __future__ import annotations
+
+import json
+import threading
+from datetime import UTC, datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import ClassVar
+
+import pytest
+
+from bench import longmemeval as lme
+from bench.llm import ChatClient, LLMError
+from bench.systems import SYSTEMS, Turn
+
+
+def _entry(qid: str, qtype: str, question: str, answer: str, gold: list[str]) -> dict:
+    return {
+        "question_id": qid,
+        "question_type": qtype,
+        "question": question,
+        "question_date": "2023/06/01 (Thu) 09:00",
+        "answer": answer,
+        "answer_session_ids": gold,
+        "haystack_session_ids": ["s1", "s2", "s3"],
+        "haystack_dates": [
+            "2023/05/01 (Mon) 10:00",
+            "2023/05/02 (Tue) 10:00",
+            "2023/05/03 (Wed) 10:00",
+        ],
+        "haystack_sessions": [
+            [
+                {"role": "user", "content": "I adopted a greyhound named Comet."},
+                {"role": "assistant", "content": "Greyhounds are gentle dogs."},
+            ],
+            [
+                {"role": "user", "content": "Any tips for baking sourdough bread?"},
+                {"role": "assistant", "content": "Use a hot dutch oven."},
+            ],
+            [
+                {"role": "user", "content": "My sister Priya moved to Lisbon."},
+                {"role": "assistant", "content": "Lisbon has lovely weather."},
+            ],
+        ],
+    }
+
+
+@pytest.fixture
+def dataset(tmp_path):
+    entries = [
+        _entry("q1", "single-session-user", "What is my greyhound called?", "Comet", ["s1"]),
+        _entry("q2", "multi-session", "Where did Priya move, and what dog do I have?",
+               "Lisbon; a greyhound", ["s1", "s3"]),
+        _entry("q3_abs", "single-session-user", "What is my cat called?",
+               "No cat was mentioned.", ["s1"]),
+    ]
+    path = tmp_path / "data.json"
+    path.write_text(json.dumps(entries))
+    return path
+
+
+class _FakeLLM(BaseHTTPRequestHandler):
+    """Answers every question 'Comet' and every judge prompt 'yes'."""
+
+    fail_first = 0
+    seen_auth: ClassVar[list[str | None]] = []
+
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        type(self).seen_auth.append(self.headers.get("Authorization"))
+        if type(self).fail_first > 0:
+            type(self).fail_first -= 1
+            self.send_response(503)
+            self.end_headers()
+            return
+        prompt = body["messages"][0]["content"]
+        text = "yes" if "Answer yes or no only." in prompt else "Comet"
+        payload = json.dumps(
+            {
+                "choices": [{"message": {"content": text}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 2},
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+@pytest.fixture
+def llm(monkeypatch):
+    _FakeLLM.fail_first = 0
+    _FakeLLM.seen_auth = []
+    server = HTTPServer(("127.0.0.1", 0), _FakeLLM)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv(
+        "MYELIN_BENCH_BASE_URL", f"http://127.0.0.1:{server.server_address[1]}/v1"
+    )
+    monkeypatch.delenv("MYELIN_BENCH_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("bench.llm.time.sleep", lambda seconds: None)
+    yield _FakeLLM
+    server.shutdown()
+    server.server_close()
+
+
+def test_parse_date():
+    assert lme.parse_date("2023/05/20 (Sat) 02:21") == datetime(
+        2023, 5, 20, 2, 21, tzinfo=UTC
+    )
+
+
+def test_session_recall_distinguishes_any_from_all():
+    recall = lme.session_recall(["a", "x", "x", "x", "x", "b"], ["a", "b"])
+    assert (recall["any@5"], recall["all@5"]) == (1.0, 0.0)
+    assert recall["all@10"] == 1.0
+
+
+def test_judge_prompt_follows_question_type():
+    base = {"question": "Q", "answer": "A"}
+    temporal = lme.judge_prompt(
+        {**base, "question_id": "x", "question_type": "temporal-reasoning"}, "H"
+    )
+    assert "off-by-one" in temporal
+    abstain = lme.judge_prompt(
+        {**base, "question_id": "x_abs", "question_type": "temporal-reasoning"}, "H"
+    )
+    assert "unanswerable" in abstain
+    with pytest.raises(ValueError, match="unknown question_type"):
+        lme.judge_prompt({**base, "question_id": "x", "question_type": "nope"}, "H")
+
+
+@pytest.mark.parametrize("name", sorted(SYSTEMS))
+def test_systems_rank_the_relevant_turn_first(name):
+    system = SYSTEMS[name]()
+    system.reset()
+    when = datetime(2023, 5, 1, tzinfo=UTC)
+    system.ingest(
+        [
+            Turn("s1", when, 0, "user", "I adopted a greyhound named Comet."),
+            Turn("s2", when, 0, "user", "Any tips for baking sourdough bread?"),
+        ]
+    )
+    hits = system.retrieve("What is my greyhound called?", 5)
+    assert hits[0].session_id == "s1"
+    system.close()
+
+
+def test_myelin_system_stamps_memories_with_the_session_date():
+    system = SYSTEMS["myelin"]()
+    system.reset()
+    when = datetime(2023, 5, 1, 10, 0, tzinfo=UTC)
+    system.ingest([Turn("s1", when, 0, "user", "I adopted a greyhound.")])
+    (memory,) = system._client._backend.list_memories(user_id="bench")
+    assert memory.t_valid == when
+    system.close()
+
+
+def test_retrieval_only_run_needs_no_model(dataset, tmp_path, capsys):
+    out = tmp_path / "run"
+    code = lme.main(["run", "--system", "myelin", "--data", str(dataset), "--out", str(out)])
+    assert code == 0
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["answered"] == 3
+    assert summary["judged"] == 0
+    # The abstention question is excluded from retrieval recall.
+    assert summary["session_recall"]["questions"] == 2
+    assert summary["session_recall"]["any@5"] == 1.0
+    lme.main(["report", str(out)])
+    table = capsys.readouterr().out
+    assert "Recall, all evidence sessions @10" in table
+    assert "QA accuracy" not in table
+
+
+def test_full_run_answers_judges_and_resumes(dataset, tmp_path, llm):
+    out = tmp_path / "run"
+    argv = ["run", "--system", "bm25", "--data", str(dataset), "--out", str(out),
+            "--answerer", "fake-answerer", "--judge", "fake-judge", "--workers", "2"]
+    assert lme.main(argv) == 0
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["judged"] == 3
+    assert summary["accuracy"]["overall"] == 1.0
+    assert summary["accuracy"]["abstention"] == 1.0
+    assert summary["cost"]["answerer_prompt_tokens"] == 300
+    hypotheses = [json.loads(line) for line in (out / "hypotheses.jsonl").read_text().splitlines()]
+    assert {h["question_id"] for h in hypotheses} == {"q1", "q2", "q3_abs"}
+    assert all(h["hypothesis"] == "Comet" for h in hypotheses)
+    # No key configured: no Authorization header is sent.
+    assert set(llm.seen_auth) == {None}
+
+    calls = len(llm.seen_auth)
+    assert lme.main(argv) == 0
+    assert len(llm.seen_auth) == calls, "a finished run must not call the model again"
+
+
+def test_run_refuses_to_mix_settings_in_one_directory(dataset, tmp_path):
+    out = tmp_path / "run"
+    base = ["run", "--data", str(dataset), "--out", str(out)]
+    assert lme.main([*base, "--system", "myelin"]) == 0
+    assert lme.main([*base, "--system", "bm25"]) == 2
+
+
+def test_oracle_gives_the_reader_only_evidence_sessions(dataset, tmp_path, llm):
+    out = tmp_path / "run"
+    assert lme.main(["run", "--system", "oracle", "--data", str(dataset), "--out", str(out),
+                     "--answerer", "fake", "--limit", "1"]) == 0
+    row = json.loads((out / "answers.jsonl").read_text().splitlines()[0])
+    assert row["context_turns"] == 2
+    assert "recall" not in row
+
+
+def test_chat_client_retries_then_succeeds(llm):
+    llm.fail_first = 2
+    completion = ChatClient("m").complete("What is my greyhound called?", max_tokens=5)
+    assert completion.text == "Comet"
+    assert len(llm.seen_auth) == 3
+
+
+def test_chat_client_gives_up_after_retries(llm):
+    llm.fail_first = 99
+    with pytest.raises(LLMError, match="HTTP 503"):
+        ChatClient("m", max_retries=1).complete("hi", max_tokens=5)
+    assert len(llm.seen_auth) == 2
+
+
+def test_chat_client_sends_configured_key(llm, monkeypatch):
+    monkeypatch.setenv("MYELIN_BENCH_API_KEY", "token-for-test")
+    ChatClient("m").complete("hi", max_tokens=5)
+    assert llm.seen_auth == ["Bearer token-for-test"]

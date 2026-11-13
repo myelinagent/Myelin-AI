@@ -42,6 +42,9 @@ class _NotFoundError(LookupError):
 
 _CLIENT_LOCK = threading.Lock()
 _CLIENT: MemoryClient | None = None
+# Where the sidecar keeps its memories. ":memory:" is lost on restart; a
+# file path (``--db-path``) persists across restarts.
+_DB_PATH = ":memory:"
 _DEFAULT_USER_ID = "myelin-sidecar-default"
 
 # Tool-call counter for vacuous-PASS guards (preflight integration checks).
@@ -64,14 +67,21 @@ def _get_client() -> MemoryClient:
     global _CLIENT
     with _CLIENT_LOCK:
         if _CLIENT is None:
-            _CLIENT = MemoryClient(db_path=":memory:", user_id=_DEFAULT_USER_ID)
+            _CLIENT = MemoryClient(db_path=_DB_PATH, user_id=_DEFAULT_USER_ID)
         return _CLIENT
 
 
 def _reset_client() -> None:
+    """Start from an empty store. With a file-backed store the same file
+    is kept and its contents are cleared."""
     global _CLIENT
     with _CLIENT_LOCK:
-        _CLIENT = MemoryClient(db_path=":memory:", user_id=_DEFAULT_USER_ID)
+        if _CLIENT is not None and _DB_PATH != ":memory:":
+            _CLIENT._backend._clear_all()
+            return
+        if _CLIENT is not None:
+            _CLIENT.close()
+        _CLIENT = MemoryClient(db_path=_DB_PATH, user_id=_DEFAULT_USER_ID)
 
 
 # ---- serializer ----------------------------------------------------------
@@ -301,13 +311,25 @@ class _Handler(BaseHTTPRequestHandler):
             self._write_json(500, {"error": type(exc).__name__, "message": str(exc)})
 
 
-def build_server(host: str = "127.0.0.1", port: int = 8765) -> HTTPServer:
+def build_server(
+    host: str = "127.0.0.1", port: int = 8765, *, db_path: str | None = None
+) -> HTTPServer:
     """Build (but do not start) an HTTPServer wrapping the myelin sidecar.
+
+    ``db_path`` selects the SQLite file the sidecar stores memories in;
+    the default keeps them in memory only.
 
     Caller is responsible for ``server.serve_forever()`` and
     ``server.server_close()``. Useful for embedding in another process or
     running on a background thread for tests.
     """
+    global _CLIENT, _DB_PATH
+    if db_path is not None and db_path != _DB_PATH:
+        with _CLIENT_LOCK:
+            if _CLIENT is not None:
+                _CLIENT.close()
+            _CLIENT = None
+            _DB_PATH = db_path
     _get_client()  # prime the singleton
     server = ThreadingHTTPServer((host, port), _Handler)
     # Requests are handled on their own threads so a slow client does not
@@ -321,6 +343,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="python -m myelin.serve")
     ap.add_argument("--host", default="127.0.0.1", help="bind host (default loopback)")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument(
+        "--db-path",
+        default=":memory:",
+        help="SQLite file to store memories in (default: in memory, lost on exit)",
+    )
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
 
@@ -329,7 +356,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    server = build_server(args.host, args.port)
+    server = build_server(args.host, args.port, db_path=args.db_path)
     logger.info("myelin-sidecar listening on http://%s:%d", args.host, args.port)
     try:
         server.serve_forever()

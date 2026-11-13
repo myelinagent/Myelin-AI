@@ -398,3 +398,52 @@ def test_sidecar_refuses_oversized_body(server):
             b"Content-Length: 999999999\r\n\r\n"
         )
         assert s.recv(64).startswith(b"HTTP/1.0 413")
+
+
+# ---- headless hooks: event time, clock, sidecar storage ----------------
+
+
+def test_add_accepts_event_time_and_as_of_respects_it():
+    c = MemoryClient()
+    try:
+        mem = c.add("Scott moved to Berlin", t_valid=datetime(2023, 5, 1))  # noqa: DTZ001
+        assert mem.t_valid == datetime(2023, 5, 1, tzinfo=UTC)
+        assert c.get(mem.id).t_valid == datetime(2023, 5, 1, tzinfo=UTC)
+        assert c.search("Berlin", as_of=datetime(2023, 4, 1, tzinfo=UTC)) == []
+        assert len(c.search("Berlin", as_of=datetime(2023, 6, 1, tzinfo=UTC))) == 1
+    finally:
+        c.close()
+
+
+def test_clock_drives_add_prune_and_cite():
+    fixed = datetime(2024, 1, 1, tzinfo=UTC)
+    c = MemoryClient(clock=lambda: fixed, cite_learning=True)
+    try:
+        mem = c.add("an ordinary fact")
+        assert mem.t_valid == fixed
+        c.cite(mem.id, answer_correct=True)
+        assert c.get(mem.id).last_cited_at == fixed
+        # Health is judged at the clock's date, so the fact is brand new.
+        fresh = c.prune()
+        later = MemoryClient(
+            backend=c._backend, clock=lambda: fixed + timedelta(days=400)
+        ).prune()
+        assert fresh.quarantined_count == 0
+        assert later.quarantined_count == 1
+    finally:
+        c.close()
+
+
+def test_sidecar_persists_to_a_file_and_reset_clears_it(tmp_path):
+    db = str(tmp_path / "sidecar.db")
+    srv = sidecar.build_server("127.0.0.1", 0, db_path=db)
+    try:
+        sidecar.tool_memory_store({"content": "Scott drinks oolong tea"})
+        srv.server_close()
+        reopened = MemoryClient(db_path=db, user_id=sidecar._DEFAULT_USER_ID)
+        assert len(reopened.search("oolong")) == 1
+        reopened.close()
+        sidecar._reset_client()
+        assert sidecar.tool_memory_search({"query": "oolong"}) == {"hits": []}
+    finally:
+        sidecar.build_server("127.0.0.1", 0, db_path=":memory:").server_close()

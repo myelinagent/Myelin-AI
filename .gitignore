@@ -8,3 +8,6 @@ build/
 .venv/
 venv/
 .DS_Store
+
+# Benchmark run output (answers, checkpoints); summaries live in bench/results/
+bench/runs/
