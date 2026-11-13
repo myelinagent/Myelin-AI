@@ -32,9 +32,12 @@ from typing import Any
 
 from bench.llm import ChatClient, LLMError
 from bench.systems import SYSTEMS, Turn
+from myelin.context import estimate_tokens
 
 PROMPT_VERSION = "lme-answer-v1"
 RECALL_DEPTH = 50
+# How far down the ranking a token budget may reach.
+BUDGET_DEPTH = 200
 RECALL_AT = (5, 10, 50)
 QUESTION_TYPES = (
     "single-session-user",
@@ -163,6 +166,19 @@ def render_history(turns: list[Turn]) -> str:
     return "\n\n".join(blocks) if blocks else "(no relevant history found)"
 
 
+def within_budget(ranked: list[Turn], token_budget: int) -> list[Turn]:
+    """The best-ranked turns that fit the budget (always at least one)."""
+    kept: list[Turn] = []
+    used = 0
+    for turn in ranked:
+        cost = estimate_tokens(turn.text)
+        if kept and used + cost > token_budget:
+            break
+        kept.append(turn)
+        used += cost
+    return kept
+
+
 def session_recall(ranked_sessions: list[str], gold: list[str]) -> dict[str, float]:
     """Did the top-k retrieved turns reach any / all of the evidence sessions?"""
     out: dict[str, float] = {}
@@ -219,7 +235,11 @@ def _sha256(path: Path) -> str:
 
 
 def answer_one(
-    entry: dict[str, Any], system_name: str, top_k: int, answerer: ChatClient | None
+    entry: dict[str, Any],
+    system_name: str,
+    top_k: int,
+    answerer: ChatClient | None,
+    token_budget: int = 0,
 ) -> dict[str, Any]:
     all_turns = history_turns(entry)
     gold = list(entry["answer_session_ids"])
@@ -239,13 +259,19 @@ def answer_one(
             system.ingest(all_turns)
             row["ingest_seconds"] = time.monotonic() - started
             started = time.monotonic()
-            ranked = system.retrieve(entry["question"], max(top_k, RECALL_DEPTH))
+            depth = max(top_k, RECALL_DEPTH, BUDGET_DEPTH if token_budget else 0)
+            ranked = system.retrieve(entry["question"], depth)
             row["retrieve_seconds"] = time.monotonic() - started
         finally:
             system.close()
         row["recall"] = session_recall([t.session_id for t in ranked], gold)
-        context = ranked[:top_k]
+        context = within_budget(ranked, token_budget) if token_budget else ranked[:top_k]
+        # Did what the answerer is actually shown reach every evidence session?
+        row["recall"]["all@context"] = (
+            1.0 if set(gold) <= {t.session_id for t in context} else 0.0
+        )
     row["context_turns"] = len(context)
+    row["context_tokens_estimate"] = sum(estimate_tokens(t.text) for t in context)
     if answerer is None:
         row["hypothesis"] = ""
         return row
@@ -298,6 +324,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "system": args.system,
         "granularity": "turn",
         "top_k": args.top_k,
+        "token_budget": args.token_budget,
         "answerer": args.answerer,
         "judge": args.judge,
         "prompt_version": PROMPT_VERSION,
@@ -308,8 +335,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     manifest_path = out / "manifest.json"
     if manifest_path.exists():
         previous = json.loads(manifest_path.read_text())
-        pinned = ("data_sha256", "system", "top_k", "answerer", "prompt_version")
-        changed = [k for k in pinned if previous.get(k) != manifest[k]]
+        pinned = (
+            "data_sha256", "system", "top_k", "token_budget", "answerer", "prompt_version",
+        )
+        changed = [k for k in pinned if previous.get(k, 0) != manifest[k]]
         if changed:
             print(
                 f"{out} holds a run with different settings ({', '.join(changed)}); "
@@ -326,7 +355,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"answering {len(todo)} of {len(entries)} questions", file=sys.stderr)
     jobs = {
         e["question_id"]: (
-            lambda e=e: answers.append(answer_one(e, args.system, args.top_k, answerer))
+            lambda e=e: answers.append(
+                answer_one(e, args.system, args.top_k, answerer, args.token_budget)
+            )
         )
         for e in todo
     }
@@ -425,7 +456,8 @@ def summarize(out: Path) -> dict[str, Any]:
     ]
     if recalls:
         summary["session_recall"] = {
-            key: _mean([r[key] for r in recalls]) for key in recalls[0]
+            key: _mean([r[key] for r in recalls if key in r])
+            for key in {k for r in recalls for k in r}
         }
         summary["session_recall"]["questions"] = len(recalls)
         summary["session_recall"]["all@10_by_type"] = {
@@ -448,6 +480,8 @@ def summarize(out: Path) -> dict[str, Any]:
         "answerer_prompt_tokens": int(sum(column("prompt_tokens"))),
         "answerer_completion_tokens": int(sum(column("completion_tokens"))),
         "mean_context_tokens": _mean(column("prompt_tokens")),
+        "mean_context_tokens_estimate": _mean(column("context_tokens_estimate")),
+        "mean_context_turns": _mean(column("context_turns")),
         "mean_ingest_seconds": _mean(column("ingest_seconds")),
         "mean_retrieve_seconds": _mean(column("retrieve_seconds")),
         "mean_answer_seconds": _mean(column("answer_seconds")),
@@ -503,6 +537,9 @@ def render_report(summaries: list[dict[str, Any]]) -> str:
             *[line(f"Recall, any evidence session @{k}", recall(f"any@{k}")) for k in RECALL_AT],
             *[line(f"Recall, all evidence sessions @{k}", recall(f"all@{k}")) for k in RECALL_AT],
             *[line(f"  all @10: {t}", recall_type(t)) for t in QUESTION_TYPES],
+            line("**All evidence in the answerer's context**", recall("all@context")),
+            line("Turns in context", cost("mean_context_turns", "{:.1f}")),
+            line("Context size (est. tokens)", cost("mean_context_tokens_estimate", "{:,.0f}")),
             line("Ingest per question (s)", cost("mean_ingest_seconds", "{:.2f}")),
             line("Retrieve per question (ms)", cost("mean_retrieve_seconds", "{:.0f}", 1000.0)),
         ]
@@ -525,6 +562,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--answerer", default="", help="model id; omit for retrieval metrics only")
     run.add_argument("--judge", default="", help="model id for grading (official: gpt-4o)")
     run.add_argument("--top-k", type=int, default=10, help="turns given to the answerer")
+    run.add_argument(
+        "--token-budget", type=int, default=0,
+        help="give the answerer as many top turns as fit this many tokens (overrides --top-k)",
+    )
     run.add_argument("--limit", type=int, default=0, help="only the first N questions")
     run.add_argument("--workers", type=int, default=8)
     run.set_defaults(func=cmd_run)

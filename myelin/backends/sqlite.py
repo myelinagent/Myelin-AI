@@ -16,11 +16,11 @@ Indexes target the hot retrieval path: user_id + state for `search()`
 and `list_memories()`, and the (user_id, t_valid) ordering used by
 `as_of=t` reconstruction.
 
-Retrieval is lexical token-overlap — same algorithm as the early
-cortex T2 retrieval before BM25 / vector fusion was added. The `[embeddings]`
-extras (optional) layers a sentence-transformer embedder on top via
-the `MemoryClient(embedder=...)` hook; this base backend stays
-dependency-free so `pip install myelin` is a single round-trip.
+Retrieval is BM25 over a SQLite FTS5 index (``memories_fts``) kept in
+step with the ``memories`` table, with English stemming. FTS5 ships with
+the SQLite bundled in CPython, so the backend stays dependency-free; on a
+SQLite built without it, search falls back to a token-overlap scan of the
+user's memories.
 
 v1.2 migration discipline: ``_apply_migrations`` is idempotent on every
 connect. ``PRAGMA table_info`` introspection adds missing columns; new
@@ -122,7 +122,24 @@ _V1_2_CITE_COLUMNS = (
     ("last_cited_at",        "last_cited_at TEXT"),
 )
 
+# Full-text index over live memories. Only ``content`` is searchable;
+# ``user_id`` rides along as a filter. ``memories_fts_rows`` maps each
+# memory to its row in the index so one memory can be updated or removed
+# without scanning the index.
+_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    content,
+    user_id UNINDEXED,
+    tokenize = 'porter unicode61'
+);
+CREATE TABLE IF NOT EXISTS memories_fts_rows (
+    memory_id   TEXT PRIMARY KEY,
+    fts_rowid   INTEGER NOT NULL UNIQUE
+);
+"""
+
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]+")
+_QUERY_TERM_RE = re.compile(r"[A-Za-z0-9]+")
 _STOPWORDS = frozenset(
     "a an the is are was were be been being of in on at to for with and or not "
     "what who where when why how do does did this that these those i you he she "
@@ -136,6 +153,20 @@ def _tokens(text: str) -> set[str]:
         for t in _TOKEN_RE.findall(text)
         if t.lower() not in _STOPWORDS
     }
+
+
+def _fts_query(text: str) -> str:
+    """Turn free text into an FTS5 query matching any of its terms.
+
+    Terms are quoted so punctuation and FTS5 operators in the text are
+    never parsed as syntax. Returns "" when no searchable term is left.
+    """
+    terms = dict.fromkeys(
+        t.lower()
+        for t in _QUERY_TERM_RE.findall(text)
+        if t.lower() not in _STOPWORDS
+    )
+    return " OR ".join(f'"{t}"' for t in terms)
 
 
 # SQLite caps bound parameters per statement (999 on builds before
@@ -222,6 +253,33 @@ class SqliteBackend:
 
             cursor.executescript(_SCHEMA_V1_2_NEW_TABLES)
             self._conn.commit()
+            self._fts = self._init_fts()
+
+    def _init_fts(self) -> bool:
+        """Create the full-text index, indexing any memories written
+        before it existed. Returns False when this SQLite has no FTS5."""
+        cursor = self._conn.cursor()
+        try:
+            cursor.executescript(_FTS_SCHEMA)
+        except sqlite3.OperationalError:
+            return False
+        indexed = cursor.execute(
+            "SELECT COUNT(*) FROM memories_fts_rows"
+        ).fetchone()[0]
+        stored = cursor.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        if indexed != stored:
+            cursor.execute("DELETE FROM memories_fts")
+            cursor.execute("DELETE FROM memories_fts_rows")
+            cursor.execute(
+                "INSERT INTO memories_fts (rowid, content, user_id) "
+                "SELECT rowid, content, user_id FROM memories"
+            )
+            cursor.execute(
+                "INSERT INTO memories_fts_rows (memory_id, fts_rowid) "
+                "SELECT id, rowid FROM memories"
+            )
+        self._conn.commit()
+        return True
 
     def _column_names(self, table: str) -> set[str]:
         """Return the set of column names for ``table``. Uses
@@ -274,6 +332,16 @@ class SqliteBackend:
                     importance,
                 ),
             )
+            if self._fts:
+                cur.execute(
+                    "INSERT INTO memories_fts (content, user_id) VALUES (?, ?)",
+                    (content, user_id),
+                )
+                cur.execute(
+                    "INSERT INTO memories_fts_rows (memory_id, fts_rowid) "
+                    "VALUES (?, ?)",
+                    (mem_id, cur.lastrowid),
+                )
             self._conn.commit()
 
         return Memory(
@@ -296,6 +364,10 @@ class SqliteBackend:
         top_k: int = 10,
         as_of: datetime | None = None,
     ) -> list[SearchResult]:
+        if top_k <= 0:
+            return []
+        if self._fts:
+            return self._search_fts(query, user_id, top_k, as_of)
         q_tokens = _tokens(query)
         if not q_tokens:
             return []
@@ -307,6 +379,46 @@ class SqliteBackend:
                 scored.append((score, mem))
         scored.sort(key=lambda kv: (-kv[0], kv[1].id))
         return [SearchResult(memory=m, score=s) for s, m in scored[:top_k]]
+
+    def _search_fts(
+        self, query: str, user_id: str, top_k: int, as_of: datetime | None
+    ) -> list[SearchResult]:
+        """BM25-ranked search over the full-text index."""
+        match = _fts_query(query)
+        if not match:
+            return []
+        if as_of is not None and as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=UTC)
+        sql = (
+            "SELECT r.memory_id, bm25(memories_fts) AS rank "
+            "FROM memories_fts JOIN memories_fts_rows r "
+            "ON r.fts_rowid = memories_fts.rowid "
+            "WHERE memories_fts MATCH ? AND user_id = ? "
+            "ORDER BY rank, r.memory_id"
+        )
+        params: list[Any] = [match, user_id]
+        if as_of is None:
+            sql += " LIMIT ?"
+            params.append(top_k)
+        with self._lock:
+            ranked = self._conn.execute(sql, params).fetchall()
+            memories = {m.id: m for m in self.get_batch([r[0] for r in ranked])}
+        results: list[SearchResult] = []
+        for memory_id, rank in ranked:
+            memory = memories.get(memory_id)
+            if memory is None:
+                continue
+            if as_of is not None and (
+                memory.t_valid > as_of
+                or (memory.t_invalid is not None and memory.t_invalid <= as_of)
+            ):
+                continue
+            # bm25() is lower-is-better and negative; expose it as a
+            # higher-is-better score.
+            results.append(SearchResult(memory=memory, score=-rank))
+            if len(results) >= top_k:
+                break
+        return results
 
     def get(self, memory_id: str) -> Memory | None:
         found = self.get_batch([memory_id])
@@ -357,6 +469,12 @@ class SqliteBackend:
                 "UPDATE memories SET content = ?, metadata_json = ? WHERE id = ?",
                 (new_content, json.dumps(new_meta), memory_id),
             )
+            if self._fts and new_content != existing.content:
+                cur.execute(
+                    "UPDATE memories_fts SET content = ? WHERE rowid = "
+                    "(SELECT fts_rowid FROM memories_fts_rows WHERE memory_id = ?)",
+                    (new_content, memory_id),
+                )
             self._conn.commit()
             existing.content = new_content
             existing.metadata = new_meta
@@ -371,6 +489,7 @@ class SqliteBackend:
             cur = self._conn.cursor()
             cur.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
             deleted = cur.rowcount
+            self._unindex(cur, memory_id)
             cur.execute("DELETE FROM tombstones WHERE id = ?", (memory_id,))
             deleted += cur.rowcount
             cur.execute(
@@ -461,6 +580,7 @@ class SqliteBackend:
                      cite_correct, cite_incorrect, last_cited),
                 )
                 cur.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+                self._unindex(cur, memory_id)
                 self._conn.commit()
                 return True
 
@@ -552,6 +672,9 @@ class SqliteBackend:
         with self._lock:
             cur = self._conn.cursor()
             cur.execute("DELETE FROM memories")
+            if self._fts:
+                cur.execute("DELETE FROM memories_fts")
+                cur.execute("DELETE FROM memories_fts_rows")
             cur.execute("DELETE FROM tombstones")
             cur.execute("DELETE FROM events")
             cur.execute("DELETE FROM cite_events")
@@ -559,6 +682,18 @@ class SqliteBackend:
             self._conn.commit()
 
     # ---- internals ----------------------------------------------
+
+    def _unindex(self, cur: sqlite3.Cursor, memory_id: str) -> None:
+        """Drop a memory from the full-text index (it left ``memories``)."""
+        if self._fts:
+            cur.execute(
+                "DELETE FROM memories_fts WHERE rowid = "
+                "(SELECT fts_rowid FROM memories_fts_rows WHERE memory_id = ?)",
+                (memory_id,),
+            )
+            cur.execute(
+                "DELETE FROM memories_fts_rows WHERE memory_id = ?", (memory_id,)
+            )
 
     def _upsert_event(self, event: Event) -> None:
         cur = self._conn.cursor()

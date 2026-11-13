@@ -231,3 +231,31 @@ def test_chat_client_sends_configured_key(llm, monkeypatch):
     monkeypatch.setenv("MYELIN_BENCH_API_KEY", "token-for-test")
     ChatClient("m").complete("hi", max_tokens=5)
     assert llm.seen_auth == ["Bearer token-for-test"]
+
+
+def test_token_budget_decides_what_the_answerer_sees(dataset, tmp_path, capsys):
+    tight, roomy = tmp_path / "tight", tmp_path / "roomy"
+    base = ["run", "--system", "myelin", "--data", str(dataset)]
+    assert lme.main([*base, "--out", str(tight), "--token-budget", "1"]) == 0
+    assert lme.main([*base, "--out", str(roomy), "--token-budget", "5000"]) == 0
+    rows = {
+        name: [json.loads(line) for line in (path / "answers.jsonl").read_text().splitlines()]
+        for name, path in (("tight", tight), ("roomy", roomy))
+    }
+    assert all(row["context_turns"] <= 1 for row in rows["tight"])
+    assert max(row["context_turns"] for row in rows["roomy"]) > 1
+    summary = json.loads((roomy / "summary.json").read_text())
+    assert summary["manifest"]["token_budget"] == 5000
+    assert summary["session_recall"]["all@context"] == 1.0
+    # A different budget is a different run and may not reuse the directory.
+    assert lme.main([*base, "--out", str(tight), "--token-budget", "5000"]) == 2
+    lme.main(["report", str(tight), str(roomy)])
+    assert "All evidence in the answerer's context" in capsys.readouterr().out
+
+
+def test_within_budget_always_keeps_one_turn():
+    when = datetime(2023, 5, 1, tzinfo=UTC)
+    turns = [Turn("s", when, i, "user", "x" * 400) for i in range(3)]
+    assert len(lme.within_budget(turns, 1)) == 1
+    assert len(lme.within_budget(turns, 250)) == 2
+    assert lme.within_budget([], 100) == []
