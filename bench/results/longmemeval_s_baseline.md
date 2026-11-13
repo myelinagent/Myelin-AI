@@ -45,15 +45,6 @@ questions have no evidence and are excluded, leaving 470.
   Myelin's search re-reads and re-tokenizes every stored turn per query
   (293 ms against 3 ms at about 500 turns).
 
-## Not yet measured
+## Answer accuracy
 
-Answer accuracy (the number leaderboards quote) needs an answering model and
-the gpt-4o judge. The harness supports it (`--answerer`, `--judge`), but the
-run was not possible on 2026-11-13 because the API key available had
-exhausted its credit limit. Rerun with:
-
-```bash
-python -m bench.longmemeval run --system myelin --data longmemeval_s_cleaned.json --out bench/runs/lme_s_myelin --answerer gpt-4o-mini --judge gpt-4o
-```
-
-Machine-readable summaries are alongside this file.
+Measured later the same day: see `longmemeval_s_accuracy.md`.

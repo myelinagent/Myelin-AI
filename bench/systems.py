@@ -28,6 +28,8 @@ class Turn:
     index: int
     role: str
     content: str
+    # Marked by the benchmark as containing the answer.
+    evidence: bool = False
 
     @property
     def text(self) -> str:

@@ -1,0 +1,72 @@
+{
+  "manifest": {
+    "benchmark": "LongMemEval",
+    "data_file": "longmemeval_s_cleaned.json",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "questions": 500,
+    "system": "myelin",
+    "granularity": "turn",
+    "top_k": 10,
+    "token_budget": 6000,
+    "max_turn_tokens": 300,
+    "answerer": "openai/gpt-4o-mini",
+    "judge": "openai/gpt-4o",
+    "prompt_version": "lme-answer-v1",
+    "temperature": 0.0,
+    "git_commit": "0cf6f0f40dd3de2fa0c2dde684bc0ebdb4247cbc",
+    "started_at": "2026-11-13T22:32:26+00:00"
+  },
+  "answered": 500,
+  "judged": 500,
+  "accuracy": {
+    "overall": 0.648,
+    "task_averaged": 0.6285850845061371,
+    "abstention": 0.8333333333333334,
+    "by_type": {
+      "single-session-user": 0.8714285714285714,
+      "single-session-assistant": 0.875,
+      "single-session-preference": 0.13333333333333333,
+      "multi-session": 0.5413533834586466,
+      "temporal-reasoning": 0.5939849624060151,
+      "knowledge-update": 0.7564102564102564
+    },
+    "counts": {
+      "single-session-user": 70,
+      "single-session-assistant": 56,
+      "single-session-preference": 30,
+      "multi-session": 133,
+      "temporal-reasoning": 133,
+      "knowledge-update": 78
+    }
+  },
+  "session_recall": {
+    "any@5": 0.948936170212766,
+    "all@5": 0.7489361702127659,
+    "evidence_turns_share@context": 0.9114893617021276,
+    "any@10": 0.9787234042553191,
+    "evidence_turns_all@context": 0.8595744680851064,
+    "any@50": 0.9957446808510638,
+    "all@10": 0.8595744680851064,
+    "all@50": 0.9702127659574468,
+    "all@context": 0.9659574468085106,
+    "questions": 470,
+    "all@10_by_type": {
+      "single-session-user": 1.0,
+      "single-session-assistant": 1.0,
+      "single-session-preference": 0.8666666666666667,
+      "multi-session": 0.7272727272727273,
+      "temporal-reasoning": 0.7874015748031497,
+      "knowledge-update": 0.9722222222222222
+    }
+  },
+  "cost": {
+    "answerer_prompt_tokens": 2603227,
+    "answerer_completion_tokens": 16387,
+    "mean_context_tokens": 5206.454,
+    "mean_context_tokens_estimate": 5750.558,
+    "mean_context_turns": 38.144,
+    "mean_ingest_seconds": 0.11648462737400178,
+    "mean_retrieve_seconds": 0.004511926240003504,
+    "mean_answer_seconds": 1.8581344404840032
+  }
+}

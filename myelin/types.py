@@ -102,10 +102,15 @@ class SearchResult:
     `memory` is the matched record. `score` is a non-negative float
     where higher = better — relative within a single `search()` call
     only, not comparable across calls.
+
+    `excerpt` is set when the result was shortened for context (see
+    `MemoryClient.recall(max_result_tokens=...)`): the passages of the
+    memory that bear on the query. `memory.content` is always complete.
     """
 
     memory: Memory
     score: float
+    excerpt: str | None = None
 
 
 @dataclass

@@ -26,6 +26,12 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 - **`recall(query, token_budget=6000)`** returns as many top results as fit
   a token budget, for building an answering model's context. With it, 90.9%
   of LongMemEval-S questions have all their evidence in context.
+- **`recall(max_result_tokens=300)`** counts a longer memory against the
+  budget as an excerpt of the passages that bear on the query
+  (`SearchResult.excerpt`); the stored memory is untouched. `excerpt()` is
+  exported. End to end on LongMemEval-S with `gpt-4o-mini` answering,
+  accuracy went from 60.4% (1.4.0 search, top 10) to 64.8%
+  (`bench/results/longmemeval_s_accuracy.md`).
 - **`format_context(results)`** renders results oldest first under date
   headings; `fit_to_budget` and `estimate_tokens` are exported with it.
 - **Headless benchmark harness** (`bench/`, not part of the published

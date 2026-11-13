@@ -58,7 +58,26 @@ Prefixing the query with `user:` to match the stored turn format changed
 nothing at any budget (79.4 / 87.4 / 90.9 / 93.2 at 2K / 4K / 6K / 8K tokens,
 with and without it), so it was not adopted.
 
-## Still not measured
+## Excerpts of long turns
 
-Answer accuracy. See the baseline file for the command; it needs a funded
-model endpoint.
+Added after the table above. Long assistant replies (median 419 tokens)
+were using most of the budget while 94% of evidence sits in short user
+turns (median 72). Shortening turns over 300 tokens to the passages that
+mention the query lets about twice as many fit.
+
+Share of questions where every turn marked as holding the answer is in the
+answerer's context:
+
+| Original search, top 10 | Stage 1, top 10 | + 6,000-token budget | + 300-token excerpts |
+|---:|---:|---:|---:|
+| 61.1 | 70.6 | 77.7 | 86.0 |
+
+Session-level recall alone was misleading here: spreading results across
+sessions raised it to 96% while turn-level recall fell to 42%, so that
+idea was dropped. Favouring memories dated inside a time window read from
+the question ("last month") was also dropped: it lowered recall on the
+questions that have such a phrase, from 64.3% to 59.5%.
+
+## Answer accuracy
+
+See `longmemeval_s_accuracy.md`.

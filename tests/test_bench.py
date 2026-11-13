@@ -250,7 +250,36 @@ def test_token_budget_decides_what_the_answerer_sees(dataset, tmp_path, capsys):
     # A different budget is a different run and may not reuse the directory.
     assert lme.main([*base, "--out", str(tight), "--token-budget", "5000"]) == 2
     lme.main(["report", str(tight), str(roomy)])
-    assert "All evidence in the answerer's context" in capsys.readouterr().out
+    assert "All evidence sessions in the answerer's context" in capsys.readouterr().out
+
+
+def test_evidence_turns_are_tracked_and_long_turns_excerpted(tmp_path):
+    entry = _entry("q1", "single-session-user", "What is my greyhound called?", "Comet", ["s1"])
+    entry["haystack_sessions"][0][0]["has_answer"] = True
+    filler = " ".join(f"Sentence {i} is about the weather." for i in range(200))
+    entry["haystack_sessions"][0][1]["content"] = (
+        f"{filler} Your greyhound is a gentle dog. {filler}"
+    )
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps([entry]))
+
+    turns = lme.history_turns(entry)
+    assert [t.evidence for t in turns[:2]] == [True, False]
+
+    out = tmp_path / "run"
+    assert lme.main(["run", "--system", "myelin", "--data", str(data), "--out", str(out),
+                     "--token-budget", "400", "--max-turn-tokens", "50"]) == 0
+    row = json.loads((out / "answers.jsonl").read_text().splitlines()[0])
+    # Both greyhound turns fit only because the long reply was cut down.
+    assert row["context_turns"] == 2
+    assert row["context_tokens_estimate"] < 150
+    assert row["recall"]["evidence_turns_all@context"] == 1.0
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["manifest"]["max_turn_tokens"] == 50
+
+    shortened = lme.within_budget(turns[:2], 400, entry["question"], 50)
+    assert "greyhound is a gentle dog" in shortened[1].content
+    assert len(shortened[1].content) < 400
 
 
 def test_within_budget_always_keeps_one_turn():

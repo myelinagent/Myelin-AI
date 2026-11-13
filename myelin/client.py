@@ -48,7 +48,7 @@ from myelin._internal.salience import (
 from myelin._internal.session import SessionRegistry, _new_turn_id
 from myelin.backend import Backend
 from myelin.backends.sqlite import SqliteBackend
-from myelin.context import fit_to_budget
+from myelin.context import fit_to_budget, with_excerpts
 from myelin.types import (
     ApoptosisReport,
     ConsolidationReport,
@@ -572,6 +572,7 @@ class MemoryClient:
         *,
         token_budget: int = 6000,
         max_results: int = 100,
+        max_result_tokens: int | None = 300,
         user_id: str | None = None,
         as_of: datetime | None = None,
         session_id: str | None = None,
@@ -585,12 +586,23 @@ class MemoryClient:
         too much for long ones. Results come back best first; pass them
         to :func:`myelin.format_context` to render them.
 
+        A memory longer than ``max_result_tokens`` counts against the
+        budget as an excerpt: the passages that share words with the
+        query, available as ``result.excerpt`` and used by
+        ``format_context``. This stops one long memory from crowding out
+        several short ones. ``result.memory.content`` is always the full
+        text; pass ``max_result_tokens=None`` to never shorten.
+
         At least one result is returned when anything matches, and never
         more than ``max_results``. The other arguments are those of
         :meth:`search`.
         """
         if token_budget <= 0:
             raise ValueError(f"token_budget must be positive, got {token_budget}")
+        if max_result_tokens is not None and max_result_tokens <= 0:
+            raise ValueError(
+                f"max_result_tokens must be positive or None, got {max_result_tokens}"
+            )
         hits = self.search(
             query,
             user_id=user_id,
@@ -599,6 +611,8 @@ class MemoryClient:
             session_id=session_id,
             modes=modes,
         )
+        if max_result_tokens is not None:
+            hits = with_excerpts(hits, query, max_result_tokens)
         return fit_to_budget(hits, token_budget)
 
     def _search_working_set(
