@@ -55,6 +55,12 @@ class Backend(Protocol):
     def get(self, memory_id: str) -> Memory | None:
         ...
 
+    # Optional: ``get_batch(memory_ids) -> list[Memory]`` returns the live
+    # memories for several ids in request order, omitting unknown and
+    # tombstoned ids. It is deliberately not part of this Protocol so
+    # existing backends stay conformant; MemoryClient uses it when
+    # present and falls back to per-id ``get()`` otherwise.
+
     def update(
         self,
         memory_id: str,
