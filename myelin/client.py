@@ -573,6 +573,7 @@ class MemoryClient:
         token_budget: int = 6000,
         max_results: int = 100,
         max_result_tokens: int | None = 300,
+        whole_results: int = 3,
         user_id: str | None = None,
         as_of: datetime | None = None,
         session_id: str | None = None,
@@ -590,8 +591,12 @@ class MemoryClient:
         budget as an excerpt: the passages that share words with the
         query, available as ``result.excerpt`` and used by
         ``format_context``. This stops one long memory from crowding out
-        several short ones. ``result.memory.content`` is always the full
-        text; pass ``max_result_tokens=None`` to never shorten.
+        several short ones. The ``whole_results`` best-ranked results
+        are never shortened: the top hits are the likeliest to hold the
+        answer, and an answer inside a long memory (a list, a set of
+        steps) can be lost in an excerpt. ``result.memory.content`` is
+        always the full text; pass ``max_result_tokens=None`` to never
+        shorten.
 
         At least one result is returned when anything matches, and never
         more than ``max_results``. The other arguments are those of
@@ -612,7 +617,9 @@ class MemoryClient:
             modes=modes,
         )
         if max_result_tokens is not None:
-            hits = with_excerpts(hits, query, max_result_tokens)
+            hits = with_excerpts(
+                hits, query, max_result_tokens, keep_whole=max(0, whole_results)
+            )
         return fit_to_budget(hits, token_budget)
 
     def _search_working_set(

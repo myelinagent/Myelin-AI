@@ -310,7 +310,7 @@ def test_prompt_choice_is_recorded_and_pinned(dataset, tmp_path, llm):
             "--answerer", "fake", "--limit", "1"]
     assert lme.main([*base, "--prompt", "direct"]) == 0
     manifest = json.loads((out / "manifest.json").read_text())
-    assert manifest["prompt_version"] == "myelin-direct-v1"
+    assert manifest["prompt_version"] == "myelin-direct-v2"
     row = json.loads((out / "answers.jsonl").read_text().splitlines()[0])
     assert row["hypothesis"] == row["response"] == "Comet"
     # The same directory cannot be continued with another prompt.

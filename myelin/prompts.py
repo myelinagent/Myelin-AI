@@ -11,8 +11,8 @@ situations where models most often go wrong with memory:
   Saturday" inside it has to be worked out from that date;
 * requests for advice — use what the history shows about the person
   instead of declining because no ready-made answer is stored;
-* missing information — say so, but only when the specific thing asked
-  for is absent.
+* missing information — say so when the history is about something
+  similar but not the thing asked, or a needed figure was never stated.
 
 Two styles are provided. ``"reasoned"`` asks for brief working before the
 answer and is the stronger choice for small or mid-sized models.
@@ -38,9 +38,13 @@ list. Do not stop at the first match.
 on what the history shows about the user's preferences, habits, constraints and past \
 experiences, and say which of those you are relying on. Never refuse such a request \
 for lack of information.
-- If the question asks for a specific fact that the history does not contain, say \
-that it was not mentioned, and say what related information was mentioned instead. \
-Do not guess."""
+- Before answering a factual question, check that the history is about the very thing \
+asked: the same item, place, person, size and time period. If it only covers \
+something similar (a 20-gallon tank when the question is about a 30-gallon one), or \
+a figure needed for the answer was never stated, say that the information was not \
+mentioned and name the related thing that was. Do not answer about the nearest match, \
+do not fill a gap with a guess, and do not answer "0" or "none" for something that \
+simply never came up."""
 
 _REASONED = """\
 You are answering a question for a user, using excerpts from their past conversations \

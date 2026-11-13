@@ -41,7 +41,8 @@ def test_every_style_carries_the_rules(style):
         "list every relevant item",
         "relative to that conversation's date",
         "Never refuse such a request",
-        "say that it was not mentioned",
+        "say that the information was not",
+        "Do not answer about the nearest match",
     ):
         assert phrase in prompt
 
