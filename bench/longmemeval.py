@@ -34,8 +34,11 @@ from typing import Any
 from bench.llm import ChatClient, LLMError
 from bench.systems import SYSTEMS, Turn
 from myelin.context import estimate_tokens, excerpt
+from myelin.prompts import ANSWER_STYLES, build_answer_prompt
 
-PROMPT_VERSION = "lme-answer-v1"
+# Answer prompts. "v1" is the plain prompt the first baselines were run
+# with, kept so they stay reproducible; the others are Myelin's own.
+PROMPT_VERSIONS = {"v1": "lme-answer-v1", "reasoned": "myelin-reasoned-v1", "direct": "myelin-direct-v1"}
 RECALL_DEPTH = 50
 # How far down the ranking a token budget may reach.
 BUDGET_DEPTH = 200
@@ -247,6 +250,15 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def final_answer(response: str) -> str:
+    """The part of a response that is graded: what follows the last
+    "Answer:" line, so working notes cannot earn credit on their own.
+    A response without that marker is graded whole."""
+    _, marker, tail = response.rpartition("Answer:")
+    tail = tail.strip().lstrip("*").strip()  # models often write "**Answer:** …"
+    return tail if marker and tail else response.strip()
+
+
 # ---- run --------------------------------------------------------------
 
 
@@ -257,6 +269,7 @@ def answer_one(
     answerer: ChatClient | None,
     token_budget: int = 0,
     max_turn_tokens: int = 0,
+    prompt_style: str = "reasoned",
 ) -> dict[str, Any]:
     all_turns = history_turns(entry)
     gold = list(entry["answer_session_ids"])
@@ -301,14 +314,21 @@ def answer_one(
     if answerer is None:
         row["hypothesis"] = ""
         return row
-    prompt = ANSWER_PROMPT.format(
-        history=render_history(context),
-        question_date=entry["question_date"],
-        question=entry["question"],
-    )
-    completion = answerer.complete(prompt, max_tokens=400)
+    history = render_history(context)
+    if prompt_style == "v1":
+        prompt = ANSWER_PROMPT.format(
+            history=history,
+            question_date=entry["question_date"],
+            question=entry["question"],
+        )
+    else:
+        prompt = build_answer_prompt(
+            history, entry["question"], now=entry["question_date"], style=prompt_style
+        )
+    completion = answerer.complete(prompt, max_tokens=800)
     row.update(
-        hypothesis=completion.text,
+        hypothesis=final_answer(completion.text),
+        response=completion.text,
         prompt_tokens=completion.prompt_tokens,
         completion_tokens=completion.completion_tokens,
         answer_seconds=completion.seconds,
@@ -354,7 +374,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "max_turn_tokens": args.max_turn_tokens,
         "answerer": args.answerer,
         "judge": args.judge,
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": PROMPT_VERSIONS[args.prompt],
         "temperature": 0.0,
         "git_commit": _git_commit(),
         "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -386,7 +406,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             lambda e=e: answers.append(
                 answer_one(
                     e, args.system, args.top_k, answerer,
-                    args.token_budget, args.max_turn_tokens,
+                    args.token_budget, args.max_turn_tokens, args.prompt,
                 )
             )
         )
@@ -603,6 +623,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--max-turn-tokens", type=int, default=0,
         help="with --token-budget: shorten longer turns to a query-focused excerpt",
+    )
+    run.add_argument(
+        "--prompt", default="reasoned", choices=["v1", *ANSWER_STYLES],
+        help="answer prompt: Myelin's 'reasoned' or 'direct', or 'v1' (first baselines)",
     )
     run.add_argument("--limit", type=int, default=0, help="only the first N questions")
     run.add_argument("--workers", type=int, default=8)
