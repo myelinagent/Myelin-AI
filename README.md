@@ -336,9 +336,12 @@ client.add(content, *, user_id=None, metadata=None, event=None,
 client.search(query, *, user_id=None, top_k=10, as_of=None,
               session_id=None, modes=("working","session","long_term")) -> list[SearchResult]
 client.recall(query, *, token_budget=6000, max_results=100,
-              max_result_tokens=300, user_id=None, as_of=None,
-              session_id=None, modes=("long_term",)) -> list[SearchResult]
+              max_result_tokens=300, whole_results=3, user_id=None,
+              as_of=None, session_id=None,
+              modes=("long_term",)) -> list[SearchResult]
 format_context(results) -> str        # from myelin import format_context
+build_answer_prompt(history, question, *, now=None,
+                    style="reasoned") -> str
 client.get(memory_id) -> Memory | None
 client.update(memory_id, *, content=None, metadata=None) -> Memory
 client.delete(memory_id) -> bool

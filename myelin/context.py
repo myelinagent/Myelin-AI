@@ -111,14 +111,20 @@ def shown_text(result: SearchResult) -> str:
 
 
 def with_excerpts(
-    results: Iterable[SearchResult], query: str, max_tokens: int
+    results: Iterable[SearchResult],
+    query: str,
+    max_tokens: int,
+    *,
+    keep_whole: int = 0,
 ) -> list[SearchResult]:
     """Attach a query-focused excerpt to each result longer than
-    ``max_tokens``. Memories themselves are left untouched."""
+    ``max_tokens``, except the first ``keep_whole`` (the best ranked),
+    which are passed through complete. Memories themselves are left
+    untouched."""
     out: list[SearchResult] = []
-    for result in results:
+    for rank, result in enumerate(results):
         content = result.memory.content
-        if estimate_tokens(content) > max_tokens:
+        if rank >= keep_whole and estimate_tokens(content) > max_tokens:
             result = replace(result, excerpt=excerpt(content, query, max_tokens))
         out.append(result)
     return out

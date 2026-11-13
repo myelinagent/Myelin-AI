@@ -297,7 +297,9 @@ def test_recall_excerpts_long_memories_but_keeps_them_whole(client):
     long_reply = f"{_FILLER} Oolong is a partly oxidised tea. {_FILLER}"
     stored = client.add(long_reply)
     client.add("Scott prefers oolong tea")
-    hits = client.recall("oolong tea", token_budget=6000, max_result_tokens=50)
+    hits = client.recall(
+        "oolong tea", token_budget=6000, max_result_tokens=50, whole_results=0
+    )
     by_id = {h.memory.id: h for h in hits}
     assert by_id[stored.id].memory.content == long_reply
     assert "Oolong is a partly oxidised tea" in by_id[stored.id].excerpt
@@ -313,9 +315,22 @@ def test_excerpts_let_more_memories_fit_the_budget(client):
     for i in range(8):
         client.add(f"{_FILLER} Note {i}: Scott drinks oolong tea.")
     whole = client.recall("oolong tea", token_budget=1500, max_result_tokens=None)
-    short = client.recall("oolong tea", token_budget=1500, max_result_tokens=100)
+    short = client.recall(
+        "oolong tea", token_budget=1500, max_result_tokens=100, whole_results=0
+    )
     assert len(whole) == 1
     assert len(short) == 8
+
+
+def test_recall_keeps_the_best_ranked_results_whole(client):
+    for i in range(6):
+        client.add(f"{_FILLER} Note {i}: Scott drinks oolong tea.")
+    hits = client.recall("oolong tea", token_budget=20_000, max_result_tokens=100)
+    assert [h.excerpt is None for h in hits] == [True, True, True, False, False, False]
+    none_whole = client.recall(
+        "oolong tea", token_budget=20_000, max_result_tokens=100, whole_results=0
+    )
+    assert all(h.excerpt is not None for h in none_whole)
 
 
 def test_recall_rejects_a_non_positive_excerpt_size(client):

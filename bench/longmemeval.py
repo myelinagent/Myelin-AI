@@ -34,8 +34,11 @@ from typing import Any
 from bench.llm import ChatClient, LLMError
 from bench.systems import SYSTEMS, Turn
 from myelin.context import estimate_tokens, excerpt
+from myelin.prompts import ANSWER_STYLES, build_answer_prompt
 
-PROMPT_VERSION = "lme-answer-v1"
+# Answer prompts. "v1" is the plain prompt the first baselines were run
+# with, kept so they stay reproducible; the others are Myelin's own.
+PROMPT_VERSIONS = {"v1": "lme-answer-v1", "reasoned": "myelin-reasoned-v2", "direct": "myelin-direct-v2"}
 RECALL_DEPTH = 50
 # How far down the ranking a token budget may reach.
 BUDGET_DEPTH = 200
@@ -173,17 +176,26 @@ def render_history(turns: list[Turn]) -> str:
 
 
 def within_budget(
-    ranked: list[Turn], token_budget: int, question: str = "", max_turn_tokens: int = 0
+    ranked: list[Turn],
+    token_budget: int,
+    question: str = "",
+    max_turn_tokens: int = 0,
+    whole_turns: int = 0,
 ) -> list[Turn]:
     """The best-ranked turns that fit the budget (always at least one).
 
     With ``max_turn_tokens``, a longer turn is replaced by a
-    query-focused excerpt of about that size before it is counted.
+    query-focused excerpt of about that size before it is counted,
+    except the ``whole_turns`` best-ranked, which stay complete.
     """
     kept: list[Turn] = []
     used = 0
-    for turn in ranked:
-        if max_turn_tokens and estimate_tokens(turn.content) > max_turn_tokens:
+    for rank, turn in enumerate(ranked):
+        if (
+            max_turn_tokens
+            and rank >= whole_turns
+            and estimate_tokens(turn.content) > max_turn_tokens
+        ):
             turn = dataclasses.replace(
                 turn, content=excerpt(turn.content, question, max_turn_tokens)
             )
@@ -247,6 +259,15 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def final_answer(response: str) -> str:
+    """The part of a response that is graded: what follows the last
+    "Answer:" line, so working notes cannot earn credit on their own.
+    A response without that marker is graded whole."""
+    _, marker, tail = response.rpartition("Answer:")
+    tail = tail.strip().lstrip("*").strip()  # models often write "**Answer:** …"
+    return tail if marker and tail else response.strip()
+
+
 # ---- run --------------------------------------------------------------
 
 
@@ -257,6 +278,8 @@ def answer_one(
     answerer: ChatClient | None,
     token_budget: int = 0,
     max_turn_tokens: int = 0,
+    prompt_style: str = "reasoned",
+    whole_turns: int = 0,
 ) -> dict[str, Any]:
     all_turns = history_turns(entry)
     gold = list(entry["answer_session_ids"])
@@ -283,7 +306,9 @@ def answer_one(
             system.close()
         row["recall"] = session_recall([t.session_id for t in ranked], gold)
         if token_budget:
-            context = within_budget(ranked, token_budget, entry["question"], max_turn_tokens)
+            context = within_budget(
+                ranked, token_budget, entry["question"], max_turn_tokens, whole_turns
+            )
         else:
             context = ranked[:top_k]
         # Did what the answerer is actually shown reach every evidence
@@ -301,14 +326,21 @@ def answer_one(
     if answerer is None:
         row["hypothesis"] = ""
         return row
-    prompt = ANSWER_PROMPT.format(
-        history=render_history(context),
-        question_date=entry["question_date"],
-        question=entry["question"],
-    )
-    completion = answerer.complete(prompt, max_tokens=400)
+    history = render_history(context)
+    if prompt_style == "v1":
+        prompt = ANSWER_PROMPT.format(
+            history=history,
+            question_date=entry["question_date"],
+            question=entry["question"],
+        )
+    else:
+        prompt = build_answer_prompt(
+            history, entry["question"], now=entry["question_date"], style=prompt_style
+        )
+    completion = answerer.complete(prompt, max_tokens=800)
     row.update(
-        hypothesis=completion.text,
+        hypothesis=final_answer(completion.text),
+        response=completion.text,
         prompt_tokens=completion.prompt_tokens,
         completion_tokens=completion.completion_tokens,
         answer_seconds=completion.seconds,
@@ -352,9 +384,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         "top_k": args.top_k,
         "token_budget": args.token_budget,
         "max_turn_tokens": args.max_turn_tokens,
+        "whole_turns": args.whole_turns,
         "answerer": args.answerer,
         "judge": args.judge,
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": PROMPT_VERSIONS[args.prompt],
         "temperature": 0.0,
         "git_commit": _git_commit(),
         "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -364,7 +397,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         previous = json.loads(manifest_path.read_text())
         pinned = (
             "data_sha256", "system", "top_k", "token_budget", "max_turn_tokens",
-            "answerer", "prompt_version",
+            "whole_turns", "answerer", "prompt_version",
         )
         changed = [k for k in pinned if previous.get(k, 0) != manifest[k]]
         if changed:
@@ -386,7 +419,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             lambda e=e: answers.append(
                 answer_one(
                     e, args.system, args.top_k, answerer,
-                    args.token_budget, args.max_turn_tokens,
+                    args.token_budget, args.max_turn_tokens, args.prompt,
+                    args.whole_turns,
                 )
             )
         )
@@ -603,6 +637,14 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--max-turn-tokens", type=int, default=0,
         help="with --token-budget: shorten longer turns to a query-focused excerpt",
+    )
+    run.add_argument(
+        "--whole-turns", type=int, default=0,
+        help="with --max-turn-tokens: never shorten this many best-ranked turns",
+    )
+    run.add_argument(
+        "--prompt", default="reasoned", choices=["v1", *ANSWER_STYLES],
+        help="answer prompt: Myelin's 'reasoned' or 'direct', or 'v1' (first baselines)",
     )
     run.add_argument("--limit", type=int, default=0, help="only the first N questions")
     run.add_argument("--workers", type=int, default=8)

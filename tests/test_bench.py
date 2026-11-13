@@ -288,3 +288,30 @@ def test_within_budget_always_keeps_one_turn():
     assert len(lme.within_budget(turns, 1)) == 1
     assert len(lme.within_budget(turns, 250)) == 2
     assert lme.within_budget([], 100) == []
+
+
+@pytest.mark.parametrize(
+    ("response", "graded"),
+    [
+        ("Comet", "Comet"),
+        ("Notes: adopted in May.\nAnswer: Comet", "Comet"),
+        ("notes\n**Answer:** Comet", "Comet"),
+        ("Answer: first\nmore notes\nAnswer: second", "second"),
+        ("Notes only.\nAnswer:", "Notes only.\nAnswer:"),
+    ],
+)
+def test_only_the_final_answer_is_graded(response, graded):
+    assert lme.final_answer(response) == graded
+
+
+def test_prompt_choice_is_recorded_and_pinned(dataset, tmp_path, llm):
+    out = tmp_path / "run"
+    base = ["run", "--system", "oracle", "--data", str(dataset), "--out", str(out),
+            "--answerer", "fake", "--limit", "1"]
+    assert lme.main([*base, "--prompt", "direct"]) == 0
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["prompt_version"] == "myelin-direct-v2"
+    row = json.loads((out / "answers.jsonl").read_text().splitlines()[0])
+    assert row["hypothesis"] == row["response"] == "Comet"
+    # The same directory cannot be continued with another prompt.
+    assert lme.main([*base, "--prompt", "v1"]) == 2
