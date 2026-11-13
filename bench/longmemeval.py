@@ -17,6 +17,7 @@ https://github.com/xiaowu0162/LongMemEval — ``src/evaluation/evaluate_qa.py``.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import statistics
@@ -32,7 +33,7 @@ from typing import Any
 
 from bench.llm import ChatClient, LLMError
 from bench.systems import SYSTEMS, Turn
-from myelin.context import estimate_tokens
+from myelin.context import estimate_tokens, excerpt
 
 PROMPT_VERSION = "lme-answer-v1"
 RECALL_DEPTH = 50
@@ -147,7 +148,12 @@ def history_turns(entry: dict[str, Any]) -> list[Turn]:
     ):
         when = parse_date(date)
         for index, turn in enumerate(session):
-            turns.append(Turn(session_id, when, index, turn["role"], turn["content"]))
+            turns.append(
+                Turn(
+                    session_id, when, index, turn["role"], turn["content"],
+                    evidence=bool(turn.get("has_answer")),
+                )
+            )
     return turns
 
 
@@ -166,11 +172,21 @@ def render_history(turns: list[Turn]) -> str:
     return "\n\n".join(blocks) if blocks else "(no relevant history found)"
 
 
-def within_budget(ranked: list[Turn], token_budget: int) -> list[Turn]:
-    """The best-ranked turns that fit the budget (always at least one)."""
+def within_budget(
+    ranked: list[Turn], token_budget: int, question: str = "", max_turn_tokens: int = 0
+) -> list[Turn]:
+    """The best-ranked turns that fit the budget (always at least one).
+
+    With ``max_turn_tokens``, a longer turn is replaced by a
+    query-focused excerpt of about that size before it is counted.
+    """
     kept: list[Turn] = []
     used = 0
     for turn in ranked:
+        if max_turn_tokens and estimate_tokens(turn.content) > max_turn_tokens:
+            turn = dataclasses.replace(
+                turn, content=excerpt(turn.content, question, max_turn_tokens)
+            )
         cost = estimate_tokens(turn.text)
         if kept and used + cost > token_budget:
             break
@@ -240,6 +256,7 @@ def answer_one(
     top_k: int,
     answerer: ChatClient | None,
     token_budget: int = 0,
+    max_turn_tokens: int = 0,
 ) -> dict[str, Any]:
     all_turns = history_turns(entry)
     gold = list(entry["answer_session_ids"])
@@ -265,11 +282,20 @@ def answer_one(
         finally:
             system.close()
         row["recall"] = session_recall([t.session_id for t in ranked], gold)
-        context = within_budget(ranked, token_budget) if token_budget else ranked[:top_k]
-        # Did what the answerer is actually shown reach every evidence session?
+        if token_budget:
+            context = within_budget(ranked, token_budget, entry["question"], max_turn_tokens)
+        else:
+            context = ranked[:top_k]
+        # Did what the answerer is actually shown reach every evidence
+        # session, and every turn the benchmark marks as holding the answer?
         row["recall"]["all@context"] = (
             1.0 if set(gold) <= {t.session_id for t in context} else 0.0
         )
+        evidence = {(t.session_id, t.index) for t in all_turns if t.evidence}
+        if evidence:
+            shown = {(t.session_id, t.index) for t in context}
+            row["recall"]["evidence_turns_all@context"] = 1.0 if evidence <= shown else 0.0
+            row["recall"]["evidence_turns_share@context"] = len(evidence & shown) / len(evidence)
     row["context_turns"] = len(context)
     row["context_tokens_estimate"] = sum(estimate_tokens(t.text) for t in context)
     if answerer is None:
@@ -325,6 +351,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "granularity": "turn",
         "top_k": args.top_k,
         "token_budget": args.token_budget,
+        "max_turn_tokens": args.max_turn_tokens,
         "answerer": args.answerer,
         "judge": args.judge,
         "prompt_version": PROMPT_VERSION,
@@ -336,7 +363,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     if manifest_path.exists():
         previous = json.loads(manifest_path.read_text())
         pinned = (
-            "data_sha256", "system", "top_k", "token_budget", "answerer", "prompt_version",
+            "data_sha256", "system", "top_k", "token_budget", "max_turn_tokens",
+            "answerer", "prompt_version",
         )
         changed = [k for k in pinned if previous.get(k, 0) != manifest[k]]
         if changed:
@@ -356,7 +384,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     jobs = {
         e["question_id"]: (
             lambda e=e: answers.append(
-                answer_one(e, args.system, args.top_k, answerer, args.token_budget)
+                answer_one(
+                    e, args.system, args.top_k, answerer,
+                    args.token_budget, args.max_turn_tokens,
+                )
             )
         )
         for e in todo
@@ -537,7 +568,10 @@ def render_report(summaries: list[dict[str, Any]]) -> str:
             *[line(f"Recall, any evidence session @{k}", recall(f"any@{k}")) for k in RECALL_AT],
             *[line(f"Recall, all evidence sessions @{k}", recall(f"all@{k}")) for k in RECALL_AT],
             *[line(f"  all @10: {t}", recall_type(t)) for t in QUESTION_TYPES],
-            line("**All evidence in the answerer's context**", recall("all@context")),
+            line("**All evidence turns in the answerer's context**",
+                 recall("evidence_turns_all@context")),
+            line("Share of evidence turns in context", recall("evidence_turns_share@context")),
+            line("All evidence sessions in the answerer's context", recall("all@context")),
             line("Turns in context", cost("mean_context_turns", "{:.1f}")),
             line("Context size (est. tokens)", cost("mean_context_tokens_estimate", "{:,.0f}")),
             line("Ingest per question (s)", cost("mean_ingest_seconds", "{:.2f}")),
@@ -565,6 +599,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--token-budget", type=int, default=0,
         help="give the answerer as many top turns as fit this many tokens (overrides --top-k)",
+    )
+    run.add_argument(
+        "--max-turn-tokens", type=int, default=0,
+        help="with --token-budget: shorten longer turns to a query-focused excerpt",
     )
     run.add_argument("--limit", type=int, default=0, help="only the first N questions")
     run.add_argument("--workers", type=int, default=8)

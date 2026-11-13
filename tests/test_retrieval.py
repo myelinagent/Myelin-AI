@@ -7,7 +7,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from myelin import MemoryClient, estimate_tokens, fit_to_budget, format_context
+from myelin import (
+    MemoryClient,
+    estimate_tokens,
+    excerpt,
+    fit_to_budget,
+    format_context,
+)
 from myelin.backends.sqlite import SqliteBackend, _fts_query
 from myelin.types import Memory, SearchResult
 
@@ -196,6 +202,7 @@ def test_recall_returns_more_for_short_memories_than_top_k_would(client):
         client.add(f"Scott tea note number {i}")
     assert len(client.search("tea")) == 10
     assert len(client.recall("tea", token_budget=6000)) == 40
+    assert all(r.excerpt is None for r in client.recall("tea"))
     assert len(client.recall("tea", token_budget=6000, max_results=15)) == 15
     small = client.recall("tea", token_budget=30)
     assert 1 <= len(small) < 10
@@ -246,3 +253,71 @@ def test_recall_and_format_context_work_end_to_end(client):
     text = format_context(client.recall("Where has Scott lived or moved?"))
     assert text.index("Paris") < text.index("Berlin")
     assert text.startswith("### 2023-03-01 00:00")
+
+
+# ---- excerpts of long memories -----------------------------------------
+
+_FILLER = " ".join(f"Sentence {i} talks about the weather." for i in range(120))
+
+
+def test_excerpt_leaves_short_text_alone():
+    assert excerpt("Scott prefers tea.", "tea", 300) == "Scott prefers tea."
+
+
+def test_excerpt_keeps_the_passage_about_the_query():
+    text = f"{_FILLER} The smoker you bought needs seasoning first. {_FILLER}"
+    short = excerpt(text, "What kitchen appliance did I buy? A smoker?", 60)
+    assert "smoker you bought needs seasoning" in short
+    assert short.startswith("… ") and short.endswith(" …")
+    assert estimate_tokens(short) <= 70
+
+
+def test_excerpt_matches_word_forms_and_marks_gaps():
+    text = (
+        f"I graduated in 2015. {_FILLER} "
+        f"My graduation was held outdoors. {_FILLER}"
+    )
+    short = excerpt(text, "When did I graduate?", 40)
+    assert "graduated in 2015" in short
+    assert "graduation was held outdoors" in short
+    assert " … " in short
+
+
+def test_excerpt_falls_back_to_the_opening_when_nothing_matches():
+    short = excerpt(_FILLER, "greyhound", 20)
+    assert short == _FILLER[:80].rstrip() + "…"
+
+
+def test_excerpt_handles_one_enormous_passage():
+    blob = "tea " * 5000
+    assert estimate_tokens(excerpt(blob, "tea", 100)) <= 110
+
+
+def test_recall_excerpts_long_memories_but_keeps_them_whole(client):
+    long_reply = f"{_FILLER} Oolong is a partly oxidised tea. {_FILLER}"
+    stored = client.add(long_reply)
+    client.add("Scott prefers oolong tea")
+    hits = client.recall("oolong tea", token_budget=6000, max_result_tokens=50)
+    by_id = {h.memory.id: h for h in hits}
+    assert by_id[stored.id].memory.content == long_reply
+    assert "Oolong is a partly oxidised tea" in by_id[stored.id].excerpt
+    assert estimate_tokens(by_id[stored.id].excerpt) < 80
+    assert "Sentence 60 " not in format_context(hits)
+    assert "Oolong is a partly oxidised tea" in format_context(hits)
+
+    whole = client.recall("oolong tea", token_budget=6000, max_result_tokens=None)
+    assert all(h.excerpt is None for h in whole)
+
+
+def test_excerpts_let_more_memories_fit_the_budget(client):
+    for i in range(8):
+        client.add(f"{_FILLER} Note {i}: Scott drinks oolong tea.")
+    whole = client.recall("oolong tea", token_budget=1500, max_result_tokens=None)
+    short = client.recall("oolong tea", token_budget=1500, max_result_tokens=100)
+    assert len(whole) == 1
+    assert len(short) == 8
+
+
+def test_recall_rejects_a_non_positive_excerpt_size(client):
+    with pytest.raises(ValueError, match="max_result_tokens"):
+        client.recall("tea", max_result_tokens=0)

@@ -335,8 +335,9 @@ client.add(content, *, user_id=None, metadata=None, event=None,
            t_valid=None) -> Memory                                        # outcome= 1.4
 client.search(query, *, user_id=None, top_k=10, as_of=None,
               session_id=None, modes=("working","session","long_term")) -> list[SearchResult]
-client.recall(query, *, token_budget=6000, max_results=100, user_id=None,
-              as_of=None, session_id=None, modes=("long_term",)) -> list[SearchResult]
+client.recall(query, *, token_budget=6000, max_results=100,
+              max_result_tokens=300, user_id=None, as_of=None,
+              session_id=None, modes=("long_term",)) -> list[SearchResult]
 format_context(results) -> str        # from myelin import format_context
 client.get(memory_id) -> Memory | None
 client.update(memory_id, *, content=None, metadata=None) -> Memory

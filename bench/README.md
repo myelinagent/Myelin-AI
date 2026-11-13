@@ -30,6 +30,9 @@ Size the answerer's context by tokens instead of a fixed 10 turns:
 python -m bench.longmemeval run --system myelin --data longmemeval_s_cleaned.json --out bench/runs/myelin-6k --token-budget 6000
 ```
 
+Add `--max-turn-tokens 300` to shorten longer turns to a query-focused
+excerpt before they are counted against the budget.
+
 Compare runs:
 
 ```bash
@@ -69,8 +72,8 @@ OpenRouter).
 
 Runs are checkpointed per question: rerunning the same command continues an
 interrupted run and retries failed calls. A run directory is tied to its
-settings; changing the system, top-k, token budget, answerer or dataset needs
-a new `--out`.
+settings; changing the system, top-k, token budget, excerpt size, answerer or
+dataset needs a new `--out`.
 
 ### Rules for comparable numbers
 

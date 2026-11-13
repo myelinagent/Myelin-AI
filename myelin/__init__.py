@@ -16,7 +16,7 @@ Quickstart:
 See README for full API + cross-references to the validated mechanisms.
 """
 from myelin.client import MemoryClient
-from myelin.context import estimate_tokens, fit_to_budget, format_context
+from myelin.context import estimate_tokens, excerpt, fit_to_budget, format_context
 from myelin.types import (
     ApoptosisReport,
     ConsolidationReport,
@@ -39,6 +39,7 @@ __all__ = [
     "SearchTelemetry",
     "SessionHandle",
     "estimate_tokens",
+    "excerpt",
     "fit_to_budget",
     "format_context",
 ]
