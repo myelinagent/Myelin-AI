@@ -24,7 +24,11 @@ common.
 |---:|---:|---:|---:|---:|
 | 5,000 | 2,331 | 8 | 17 | 25 |
 | 50,000 | 3,726 | 30 | 78 | 250 |
-| 200,000 | 3,592 | 116 | 293 | 1,002 |
+| 200,000 | 3,620 | 83 | 367 | 1,002 |
+
+The 200,000 row is after picking the best vector matches without sorting
+every score; before that the median was 116 ms. The 95th percentile
+varies from run to run by about 100 ms.
 
 ## What this says
 
