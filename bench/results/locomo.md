@@ -67,6 +67,26 @@ them alongside each utterance, which is still stored and shown whole;
   (`longmemeval_s_stage2.md`). LoCoMo's conversations are between two
   people speaking loosely about dates, which is where it pays.
 
+### Evidence found at smaller budgets
+
+Share of questions with every evidence utterance in the context, hybrid
+search, no model at question time.
+
+| Token budget | No facts | Facts indexed |
+|---:|---:|---:|
+| 1,000 | 58.7 | 68.8 |
+| 2,000 | 69.2 | 76.9 |
+| 3,000 | 73.7 | 80.9 |
+| 4,000 | 76.7 | 84.1 |
+| 6,000 | 80.3 | 87.9 |
+
+With facts indexed, a 3,000-token context holds as much of the evidence
+as a 6,000-token one without them, and answers hold up: with
+`gpt-4o-mini` answering and facts indexed, a 3,000-token budget scores
+82.2% against 82.4% at 6,000 tokens (and 78.7% at 6,000 without facts).
+Prompts averaged 3,653 tokens instead of 6,251. Not measured with
+`gpt-5-mini`.
+
 ## What the numbers say
 
 - **The answering model matters most on dates.** With `gpt-4o-mini`, 129
