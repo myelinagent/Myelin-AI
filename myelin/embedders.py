@@ -45,5 +45,9 @@ class StaticEmbedder:
     def encode(self, text: str) -> Sequence[float]:
         return self._load().encode([text])[0].tolist()
 
+    def encode_batch(self, texts: Sequence[str]) -> list[list[float]]:
+        """Embed many texts in one call; much faster than one at a time."""
+        return self._load().encode(list(texts)).tolist()
+
 
 __all__ = ["DEFAULT_STATIC_MODEL", "StaticEmbedder"]

@@ -44,7 +44,7 @@ import threading
 import uuid
 from array import array
 from collections import defaultdict
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -247,6 +247,9 @@ class SqliteBackend:
         self.db_path = db_path
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._lock = threading.RLock()
+        # True while add_memories() is writing a batch, so each
+        # add_memory() leaves the commit to the end of the batch.
+        self._in_batch = False
         self._apply_migrations()
 
     def close(self) -> None:
@@ -387,7 +390,8 @@ class SqliteBackend:
                 )
             if vector_blob is not None:
                 self._write_vector(cur, mem_id, user_id, vector_blob)
-            self._conn.commit()
+            if not self._in_batch:
+                self._conn.commit()
 
         return Memory(
             id=mem_id,
@@ -400,6 +404,25 @@ class SqliteBackend:
             importance=importance,
             health_state="healthy",
         )
+
+    def add_memories(self, records: Sequence[Mapping[str, Any]]) -> list[Memory]:
+        """Write several memories in one transaction.
+
+        Each record holds the keyword arguments of :meth:`add_memory`.
+        Either every record is stored or, if one fails, none is.
+        """
+        with self._lock:
+            self._in_batch = True
+            try:
+                stored = [self.add_memory(**record) for record in records]
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                self._vector_cache.clear()
+                raise
+            finally:
+                self._in_batch = False
+        return stored
 
     def search(
         self,

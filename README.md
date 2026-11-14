@@ -333,6 +333,7 @@ Endpoints: `/tools/memory_{search,get,store,update,forget,consolidate,prune}`,
 client.add(content, *, user_id=None, metadata=None, event=None,
            confidence=0.5, importance=0.5, outcome=None,
            t_valid=None) -> Memory                                        # outcome= 1.4
+client.add_many(items, *, user_id=None) -> list[Memory]   # text or dicts of add() arguments
 client.search(query, *, user_id=None, top_k=10, as_of=None,
               session_id=None, modes=("working","session","long_term")) -> list[SearchResult]
 client.recall(query, *, token_budget=6000, max_results=100,

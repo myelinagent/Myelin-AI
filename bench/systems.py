@@ -65,12 +65,15 @@ class MyelinSystem:
 
     def ingest(self, turns: list[Turn]) -> None:
         assert self._client is not None, "call reset() first"
-        for turn in turns:
-            memory = self._client.add(
-                turn.text,
-                t_valid=turn.session_date,
-                metadata={"session_id": turn.session_id, "turn": turn.index},
-            )
+        stored = self._client.add_many(
+            {
+                "content": turn.text,
+                "t_valid": turn.session_date,
+                "metadata": {"session_id": turn.session_id, "turn": turn.index},
+            }
+            for turn in turns
+        )
+        for memory, turn in zip(stored, turns, strict=True):
             self._turns[memory.id] = turn
 
     def retrieve(self, question: str, k: int) -> list[Turn]:

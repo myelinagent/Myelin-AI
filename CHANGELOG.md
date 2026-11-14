@@ -43,6 +43,10 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
   of questions with every evidence turn in the answerer's context rose from
   85.3% to 92.3%, and accuracy with `gpt-4o` answering from 82.8% to 87.4%
   (`bench/results/longmemeval_s_stage2.md`).
+- **`add_many(items)`** writes a batch of facts in one transaction (all or
+  none) and embeds them in one call when the embedder has `encode_batch`
+  (`StaticEmbedder` does). Loading about 494 turns with embeddings went from
+  2.37 s to 0.88 s. `SqliteBackend.add_memories` is the backend half.
 - **`build_answer_prompt(history, question, now=..., style=...)`** wraps
   recalled context in instructions for the cases where answering models go
   wrong with memory: changed facts, totals and orderings, dates relative to
