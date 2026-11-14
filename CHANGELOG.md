@@ -43,6 +43,14 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
   of questions with every evidence turn in the answerer's context rose from
   85.3% to 92.3%, and accuracy with `gpt-4o` answering from 82.8% to 87.4%
   (`bench/results/longmemeval_s_stage2.md`).
+- **`cite()` feedback now influences ranking.** With cite learning enabled,
+  long-term search re-ranks a pool of the most relevant candidates: memories
+  whose cites were mostly correct move up, mostly incorrect move down, and
+  uncited memories stay where relevance put them. Feedback never pulls in a
+  memory the query did not match, and a single cite has little effect (full
+  strength at five). `MemoryClient(cite_ranking=False)` keeps cites for
+  forgetting only. Not yet measured on a benchmark: doing so without leaking
+  the answer key needs a held-out protocol.
 - **`add_many(items)`** writes a batch of facts in one transaction (all or
   none) and embeds them in one call when the embedder has `encode_batch`
   (`StaticEmbedder` does). Loading about 494 turns with embeddings went from
