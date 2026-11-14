@@ -10,6 +10,13 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Changed
 
+- **A useful cite lifts a memory's health more** (`W_USE_LIFT` 0.5 to
+  0.7, the most the contradiction-dominance rule comfortably allows).
+  In the memory-over-time benchmark, decay then hides a memory a later
+  question needs for 6.5% of questions instead of 7.1%, at the same
+  ranking. `MYELIN_W_USE_LIFT=0.5` restores the old value. Decay speed
+  and threshold are unchanged; `bench/results/lifetime.md` shows what
+  moving them buys.
 - **Hybrid search ranks its first 20 results by a balanced fusion.** The
   vector-heavy fusion pushed the right short messages out of the top
   results (LoCoMo, all evidence in the top 10: 39.6%, against 54.9% for
