@@ -561,6 +561,55 @@ class MemoryClient:
         self._n_add_calls += len(rows)
         return stored
 
+    def add_conversation(
+        self,
+        turns: Iterable[tuple[str, str]],
+        *,
+        user_id: str | None = None,
+        when: datetime | None = None,
+        llm: Callable[[str], str] | None = None,
+        people: Iterable[str] | None = None,
+    ) -> list[Memory]:
+        """Store one conversation, a memory per message.
+
+        ``turns`` is ``(speaker, text)`` pairs in order. Each message is
+        stored as ``"speaker: text"`` and dated ``when`` (when the
+        conversation took place; now if omitted). Empty messages are
+        skipped.
+
+        With ``llm`` (a callable from prompt to text), one call extracts
+        short dated facts from the conversation and indexes them with the
+        messages they came from, so a message is found by what it means
+        and "last Saturday" is resolved while the date is known. See
+        :mod:`myelin.enrich`. By default the conversation is between a
+        ``"user"`` and an assistant; for one between people pass their
+        names as ``people`` and use the names as speakers. If the model
+        call fails the conversation is stored without facts.
+        """
+        from myelin.enrich import extract_facts
+
+        kept = [(str(role), text) for role, text in turns if text and text.strip()]
+        names = list(people) if people else None
+        facts: dict[int, list[str]] = {}
+        if llm is not None and kept:
+            try:
+                facts = extract_facts(kept, when or self._now(), llm, people=names)
+            except Exception as exc:  # noqa: BLE001 — any model failure; the text is still stored
+                logger.warning(
+                    "add_conversation: fact extraction failed (%s: %s); "
+                    "storing the conversation without facts",
+                    type(exc).__name__, exc,
+                )
+        items: list[dict[str, Any]] = []
+        for number, (role, text) in enumerate(kept):
+            item: dict[str, Any] = {"content": f"{role}: {text}"}
+            if when is not None:
+                item["t_valid"] = when
+            if facts.get(number):
+                item["index_text"] = " ".join(facts[number])
+            items.append(item)
+        return self.add_many(items, user_id=user_id)
+
     def _embed_many(self, texts: list[str]) -> list[list[float] | None]:
         """Embed ``texts`` in one call when the embedder supports it."""
         encode_batch = getattr(self._embedder, "encode_batch", None)

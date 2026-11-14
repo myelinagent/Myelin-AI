@@ -228,3 +228,40 @@ def test_extract_facts_between_people_reads_every_speaker():
     assert facts == {0: ["Ana adopted a beagle on 2023-05-19."], 1: ["Ben likes dogs."]}
     assert len(seen) == 1
     assert extract_facts([("Ana", "  ")], "2023-05-20", llm, people=["Ana"]) == {}
+
+
+# ---- add_conversation ----------------------------------------------------
+
+
+def test_add_conversation_stores_dated_messages_and_indexes_facts(client):
+    when = datetime(2023, 5, 20, tzinfo=UTC)
+    prompts = []
+
+    def llm(prompt):
+        prompts.append(prompt)
+        return '{"0": ["Ana adopted a beagle puppy on 2023-05-19."]}'
+
+    stored = client.add_conversation(
+        [("Ana", "Pickle came home yesterday!"), ("Ben", "  "), ("Ben", "So happy for you.")],
+        user_id="u", when=when, llm=llm, people=["Ana", "Ben"],
+    )
+    assert [m.content for m in stored] == [
+        "Ana: Pickle came home yesterday!", "Ben: So happy for you."
+    ]
+    assert all(m.t_valid == when for m in stored)
+    assert len(prompts) == 1 and "between Ana and Ben" in prompts[0]
+    hits = client.search("beagle puppy", user_id="u")
+    assert hits and hits[0].memory.content == "Ana: Pickle came home yesterday!"
+
+
+def test_add_conversation_without_a_model_or_when_it_fails(client):
+    plain = client.add_conversation([("user", "I prefer tea.")], user_id="u")
+    assert [m.content for m in plain] == ["user: I prefer tea."]
+
+    def broken(prompt):
+        raise RuntimeError("model unavailable")
+
+    kept = client.add_conversation([("user", "I moved to Lisbon.")], user_id="u", llm=broken)
+    assert [m.content for m in kept] == ["user: I moved to Lisbon."]
+    assert client.search("Lisbon", user_id="u")
+    assert client.add_conversation([], user_id="u", llm=broken) == []

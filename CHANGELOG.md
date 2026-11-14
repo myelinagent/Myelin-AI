@@ -44,6 +44,9 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Added
 
+- **`MemoryClient.add_conversation(turns, when=, llm=, people=)`** stores a
+  conversation one memory per message and, given a model, indexes facts
+  extracted from it in the same call.
 - **`extract_facts(..., people=[...])`** extracts dated facts from a
   conversation between named people, about every speaker. Indexed with
   each utterance on LoCoMo it raises accuracy from 89.0% to 91.9%
