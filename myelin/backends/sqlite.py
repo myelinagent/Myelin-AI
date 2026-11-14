@@ -157,12 +157,16 @@ CREATE TABLE IF NOT EXISTS memory_vectors (
 CREATE INDEX IF NOT EXISTS idx_memory_vectors_user ON memory_vectors(user_id);
 """
 
-# Reciprocal-rank fusion of the lexical and vector rankings. The vector
-# ranking gets twice the weight: on LongMemEval-S that beat equal weights
-# and lexical-heavy weights for every embedding model tried.
-_RRF_K = 60
+# Reciprocal-rank fusion of the lexical and vector rankings: equal
+# weights and a small rank constant, so each ranking's best hits stay
+# near the top. A vector-heavy fusion (weight 2, constant 60) found
+# slightly more evidence deep in the list on LongMemEval-S, but on
+# LoCoMo's short messages it pushed the right ones out of the top 10
+# (all evidence in the top 10: 39.8% against 51.7%; lexical alone 54.9%).
+# See bench/results/fusion.md.
+_RRF_K = 10
 _LEXICAL_WEIGHT = 1.0
-_VECTOR_WEIGHT = 2.0
+_VECTOR_WEIGHT = 1.0
 # How far down each ranking fusion looks.
 _FUSION_DEPTH = 300
 
