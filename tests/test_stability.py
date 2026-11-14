@@ -59,38 +59,88 @@ def _fact(client: MemoryClient, city: str, *, days_ago: int = 0):
     return mem
 
 
-def test_prune_keeps_the_newer_of_two_contradicting_facts():
+def test_an_updated_fact_supersedes_the_old_one():
     c = MemoryClient(user_id="u")
     try:
         old = _fact(c, "Paris", days_ago=2)
         new = _fact(c, "Berlin")
-        first = c.prune()
-        assert (first.quarantined_count, first.retained_count) == (1, 1)
-        later = c.prune(now=datetime.now(UTC) + timedelta(days=8))
-        assert later.tombstoned_count == 1
-        assert c.get(old.id) is None
-        assert c.get(new.id).health_state == "healthy"
+        report = c.prune()
+        assert report.superseded_count == 1
+        assert report.quarantined_count == 0
+        assert report.tombstoned_count == 0
+
+        # Current search sees only the current value.
         hits = c.search("Where does Scott live")
         assert [h.memory.id for h in hits] == [new.id]
+
+        # The old value is kept, marked, and findable for the time it held.
+        stored = c.get(old.id)
+        assert stored.health_state == "healthy"
+        assert stored.t_invalid == c.get(new.id).t_valid
+        assert stored.metadata["_superseded_by"] == new.id
+        yesterday = datetime.now(UTC) - timedelta(days=1)
+        then = c.search("Where does Scott live", as_of=yesterday)
+        assert [h.memory.id for h in then] == [old.id]
+        both = c.search("Where does Scott live", include_superseded=True)
+        assert {h.memory.id for h in both} == {old.id, new.id}
+
+        # Nothing more happens on later passes.
+        again = c.prune(now=datetime.now(UTC) + timedelta(days=8))
+        assert (again.superseded_count, again.quarantined_count) == (0, 0)
+        assert c.get(new.id).health_state == "healthy"
     finally:
         c.close()
 
 
-def test_prune_keeps_only_the_latest_of_a_chain_of_updates():
+def test_a_chain_of_updates_leaves_only_the_latest_current():
     c = MemoryClient(user_id="u")
     try:
         paris = _fact(c, "Paris", days_ago=3)
         berlin = _fact(c, "Berlin", days_ago=2)
         back_to_paris = _fact(c, "Paris")
-        c.prune()
-        states = {
-            m.id: m.health_state for m in c._backend.list_memories(user_id="u")
-        }
-        assert states == {
-            paris.id: "quarantined",
-            berlin.id: "quarantined",
-            back_to_paris.id: "healthy",
-        }
+        assert c.prune().superseded_count == 2
+        assert c.get(paris.id).metadata["_superseded_by"] == berlin.id
+        assert c.get(berlin.id).metadata["_superseded_by"] == back_to_paris.id
+        assert c.get(back_to_paris.id).t_invalid is None
+        hits = c.search("Where does Scott live")
+        assert [h.memory.id for h in hits] == [back_to_paris.id]
+        two_and_a_half_days_ago = datetime.now(UTC) - timedelta(days=2, hours=12)
+        then = c.search("Where does Scott live", as_of=two_and_a_half_days_ago)
+        assert [h.memory.id for h in then] == [paris.id]
+    finally:
+        c.close()
+
+
+def test_conflicting_facts_with_the_same_timestamp_are_quarantined():
+    """Without an order there is no newer value to keep, so both are
+    treated as contradicted."""
+    c = MemoryClient(user_id="u")
+    try:
+        when = datetime.now(UTC) - timedelta(days=1)
+        for city in ("Paris", "Berlin"):
+            c.add(
+                f"Scott lives in {city}", t_valid=when,
+                metadata={"subject": "scott", "predicate": "lives_in", "object": city},
+            )
+        report = c.prune()
+        assert report.superseded_count == 0
+        assert report.quarantined_count == 2
+        assert c.search("Where does Scott live") == []
+    finally:
+        c.close()
+
+
+def test_multi_value_predicates_are_not_superseded():
+    c = MemoryClient(user_id="u")
+    try:
+        for i, drink in enumerate(("tea", "coffee")):
+            c.add(
+                f"Scott prefers {drink}",
+                t_valid=datetime.now(UTC) - timedelta(days=2 - i),
+                metadata={"subject": "scott", "predicate": "prefers", "object": drink},
+            )
+        assert c.prune().superseded_count == 0
+        assert len(c.search("Scott prefers")) == 2
     finally:
         c.close()
 

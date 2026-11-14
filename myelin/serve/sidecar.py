@@ -167,6 +167,7 @@ def tool_memory_prune(payload: dict) -> Any:
     client = _get_client()
     report = client.prune(
         user_id=payload.get("user_id") or _DEFAULT_USER_ID,
+        tombstone=bool(payload.get("tombstone", False)),
     )
     return {"report": _to_jsonable(report)}
 

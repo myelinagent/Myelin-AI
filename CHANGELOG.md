@@ -10,6 +10,27 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Changed
 
+- **Forgetting stops at quarantine.** `prune()` no longer tombstones on its
+  own. Each call now:
+  1. marks a fact as superseded when a later fact gives a different value
+     for the same `subject` and `predicate`: `t_invalid` is set and the
+     replacing fact's id is stored in `metadata["_superseded_by"]`;
+  2. restores a quarantined fact whose health has recovered;
+  3. quarantines healthy facts whose health is below the threshold.
+
+  Tombstoning needs `prune(tombstone=True)`, which applies the previous
+  seven-day window. `ApoptosisReport` gains `superseded_count` and
+  `recovered_count`. The Mem0 adapter, OpenClaw tool and sidecar accept
+  `tombstone` too.
+- **Search returns only current, healthy facts.** Quarantined facts are
+  hidden (they used to be returned), and so are superseded facts unless
+  `as_of` names a time when they held. `search()` and `recall()` take
+  `include_quarantined=True` and `include_superseded=True` to see them;
+  `get()` always returns them.
+
+  **If you relied on the old behaviour:** call `prune(tombstone=True)` to
+  keep automatic removal, and pass `include_quarantined=True` to keep
+  quarantined facts in results.
 - **Search ranks with BM25 over a SQLite full-text index, with word
   stemming.** It replaces the unweighted token-overlap scan: rare words now
   count for more than common ones, "graduate" matches "graduated", and a

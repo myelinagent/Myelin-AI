@@ -473,8 +473,9 @@ class OpenClawMemoryPlugin:
             {
                 "name": "memory_prune",
                 "description": (
-                    "Run apoptosis: quarantine sick facts and tombstone "
-                    "facts past the caspase window (P3)."
+                    "Forget on purpose: retire outdated facts and "
+                    "quarantine unhealthy ones (hidden from search, kept "
+                    "in the store)."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -493,6 +494,15 @@ class OpenClawMemoryPlugin:
                             "minimum": 1,
                             "maximum": 365,
                             "default": 7,
+                        },
+                        "tombstone": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "Also remove facts that have sat in "
+                                "quarantine past the window. Off by "
+                                "default: quarantined facts are kept."
+                            ),
                         },
                     },
                     "required": [],
@@ -561,6 +571,7 @@ class OpenClawMemoryPlugin:
             user_id=args.get("user_id"),
             now=now,
             caspase_window_days=int(args.get("caspase_window_days", 7)),
+            tombstone=bool(args.get("tombstone", False)),
         )
 
 

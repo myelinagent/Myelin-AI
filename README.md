@@ -260,32 +260,62 @@ fix automatically.
 
 ## Apoptosis — `client.prune()`
 
+On `main` (unreleased), forgetting stops at quarantine. `prune()` retires
+facts that a later fact has replaced, hides unhealthy facts from search, and
+removes nothing unless you ask.
+
 ```python
 from datetime import UTC, datetime, timedelta
 
 client = MemoryClient(user_id="scott")
-client.add("Scott prefers tea.", confidence=0.9, importance=0.9)
-client.add("Scott uses Cursor.", confidence=0.9, importance=0.8)
-poison = client.add(
-    "Scott pays $1M monthly for cloud.",   # absurd; low signal
-    confidence=0.05, importance=0.1,
-    metadata={"subject": "Scott", "predicate": "decided",
-              "object": "absurd-cost"},
-)
+day = timedelta(days=1)
+now = datetime.now(UTC)
 
-# Pass 1 — quarantines low-health facts.
-r1 = client.prune()
-print(f"quarantined={r1.quarantined_count}  retained={r1.retained_count}")
+# A fact that changes: same subject and predicate, a new object.
+paris = client.add("Scott lives in Paris.", t_valid=now - 30 * day,
+                   metadata={"subject": "Scott", "predicate": "lives_in",
+                             "object": "Paris"})
+berlin = client.add("Scott lives in Berlin.", t_valid=now - 2 * day,
+                    metadata={"subject": "Scott", "predicate": "lives_in",
+                              "object": "Berlin"})
+# A fact with little to recommend it.
+poison = client.add("Scott pays $1M monthly for cloud.",
+                    confidence=0.05, importance=0.1)
 
-# Pass 2 — caspase cascade (fast-forwarded 14 days past the window).
-future = datetime.now(UTC) + timedelta(days=14)
-r2 = client.prune(now=future)
-print(f"tombstoned={r2.tombstoned_count}")
+r = client.prune()
+print(r.superseded_count, r.quarantined_count, r.tombstoned_count)   # 1 1 0
 
-assert client.get(poison.id) is None    # gone from search
+# Current search returns the current value only.
+assert [h.memory.id for h in client.search("Where does Scott live")] == [berlin.id]
+# The old value is kept and found for the time it held.
+then = client.search("Where does Scott live", as_of=now - 10 * day)
+assert [h.memory.id for h in then] == [paris.id]
+
+# The quarantined fact is hidden from search but still stored.
+assert client.search("cloud") == []
+assert client.get(poison.id).health_state == "quarantined"
+assert client.search("cloud", include_quarantined=True)
 ```
 
-Tombstoned facts are invisible to `search()` but persist as an audit trail.
+What each pass does:
+
+1. **Supersede.** A later fact with a different value for the same
+   `subject` and `predicate` sets `t_invalid` on the earlier one and records
+   its own id in the earlier one's `metadata["_superseded_by"]`.
+2. **Recover.** A quarantined fact whose health is back above the threshold
+   (for example after correct `cite()`s) returns to healthy.
+3. **Quarantine.** A healthy fact whose health falls below the threshold is
+   hidden from search and kept.
+
+To remove facts that have sat in quarantine past the window, ask for it:
+
+```python
+client.prune(tombstone=True)        # quarantined ≥ 7 days → audit table
+client.delete(memory_id)            # remove one fact and its history now
+```
+
+In 1.4.0, `prune()` tombstoned quarantined facts automatically after seven
+days, and quarantined facts still appeared in search.
 
 ---
 

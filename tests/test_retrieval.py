@@ -106,12 +106,17 @@ def test_deleted_and_tombstoned_memories_leave_the_index(client):
     assert rows == (1, 1)
 
 
-def test_quarantined_memories_stay_searchable(client):
+def test_quarantined_memories_are_hidden_unless_asked_for(client):
     mem = client.add("Scott prefers tea")
+    kept = client.add("Scott prefers tea in the morning")
     client._backend.transition_state(
         mem.id, new_state="quarantined", quarantine_entered_at=datetime.now(UTC)
     )
-    assert [r.memory.id for r in client.search("tea")] == [mem.id]
+    assert [r.memory.id for r in client.search("tea")] == [kept.id]
+    both = client.search("tea", include_quarantined=True)
+    assert {r.memory.id for r in both} == {mem.id, kept.id}
+    # Hidden rows do not use up the result limit.
+    assert [r.memory.id for r in client.search("tea", top_k=1)] == [kept.id]
 
 
 def test_as_of_filters_after_ranking(client):
