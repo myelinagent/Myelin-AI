@@ -12,9 +12,9 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 - **Memories are graded together.** A memory's health, which `prune()`
   uses to decide what to hide, now also rises when related memories are
-  used (the same conversation, or similar meaning) and falls a little
-  each time it is retrieved for a question and not used, alongside age
-  and its own use. `add_conversation` records conversation order so the
+  used (the same conversation, or similar meaning), alongside age and
+  its own use. Being retrieved and not used does not count against
+  health (a mild penalty was measured and left off). `add_conversation` records conversation order so the
   relationships exist. Use and related use are capped below one
   contradiction. A store with no cites behaves exactly as before.
   Weights are in `myelin/_internal/health.py` (`W_RELATED`, `W_UNUSED`);
@@ -83,6 +83,12 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Added
 
+- **`python -m bench.lifetime --revisits N`** asks each question again at
+  later sessions. On repeat askings, cite feedback is worth 9.6 points of
+  top-5 evidence, and it cuts the memories decay wrongly hides from 14.1%
+  of askings to 2.0%.
+- **`Memory.related_support`**: how much a memory's related memories have
+  been used, as of the last `prune()`.
 - **Results on `main`** (`bench/results/final.md`): LongMemEval-S 90.1%
   with `gpt-5-mini` (four runs) and 88.6% with `gpt-4o`; LoCoMo 92.6%
   with `gpt-5-mini` and facts indexed.
@@ -98,8 +104,7 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 - **`MemoryClient.cite_used(results, used)`** records which of the shown
   memories an answer relied on. Used ones are cited as useful; the rest
   are counted as shown but not used (`Memory.shown_unused_count`), which
-  lowers their rank (and, since the combined health grade, their health a
-  little). With
+  lowers their rank and leaves their health alone. With
   `format_context(numbered=True)`, `build_answer_prompt(ask_used=True)`
   and `parse_used()` the answering model supplies the list. On held-out
   LoCoMo questions all evidence is in the top 5 for 47.8% of questions

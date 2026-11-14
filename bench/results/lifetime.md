@@ -138,6 +138,67 @@ feedback (compare the tables at the top, measured before it):
   so a used memory's neighbours are only a little more likely to be
   needed later than any other memory.
 
+## As shipped: relationships on, no penalty for unused showings
+
+The unused penalty (`W_UNUSED`) was then set to zero: being retrieved
+and not used lowers a memory's rank, not its health. All ten
+conversations, three schedules, decay + feedback:
+
+| Questions asked | | top 5 | top 10 | top 20 | Needed a memory decay had hidden | Store still searchable |
+|---|---|---:|---:|---:|---:|---:|
+| up to 6 sessions later | with the penalty | 53.6 | 61.0 | 66.6 | 6.2 | 73.3 |
+| | **as shipped** | 52.8 ± 0.4 | 60.8 ± 0.2 | 64.9 ± 0.2 | 2.5 ± 0.1 | 86.2 |
+| up to 12 sessions later | with the penalty | 50.7 | 58.1 | 63.8 | 9.9 | 71.7 |
+| | **as shipped** | 51.0 ± 0.4 | 58.8 ± 0.3 | 63.5 ± 0.1 | 4.0 ± 0.6 | 85.0 |
+
+Needed memories hidden fall by more than half and the loss at the
+longer lag goes away. Decay prunes about 14% of the store instead of
+27%, and the top 20 at the shorter lag gives back a point or two.
+
+## Revisited questions
+
+`--revisits 2`: every question is asked three times, each asking some
+sessions after the last. This is the workload LoCoMo lacks, a user
+returning to the same facts. All ten conversations, three schedules;
+figures are for the repeat askings only.
+
+| | top 5 | top 10 | Needed a memory decay had hidden | Store still searchable at the end |
+|---|---:|---:|---:|---:|
+| static | 44.1 ± 0.1 | 54.0 ± 0.2 | 0.0 | 100.0 |
+| decay | 45.9 ± 0.1 | 54.0 ± 0.2 | 14.1 ± 0.2 | 66.2 |
+| feedback | 53.7 ± 0.5 | 59.5 ± 0.3 | 0.0 | 100.0 |
+| decay + feedback | 53.8 ± 0.5 | 59.6 ± 0.2 | 2.0 ± 0.1 | 89.6 |
+
+- **Promotion by use is worth more when facts come back**: 9.6 points
+  in the top 5 on repeat askings (44.1 to 53.7), against 6.4 when each
+  question is asked once.
+- **Use protects what is asked about again.** Decay on its own had
+  hidden a needed memory on 14.1% of repeat askings. With feedback it
+  is 2.0%, while a tenth of the store is still pruned.
+- This is where the mechanisms show that they belong together, and it
+  is invisible in a benchmark that asks each question once.
+
+## The same grade in ranking: measured, left off
+
+`prune()` stores each memory's related support (`Memory.related_support`),
+and cite-informed ranking can count it towards a memory's own record
+(`RELATED_SHARE` in `myelin/_internal/cite_ranking.py`). Five training
+conversations, decay + feedback:
+
+| Share of a useful cite per unit of related support | top 5 | top 10 | top 20 | Repeat askings: top 5 | top 10 |
+|---|---:|---:|---:|---:|---:|
+| 0 (off) | 54.2 | 61.3 | 65.9 | 53.8 | 60.3 |
+| 0.25 | 54.0 | 61.4 | 65.7 | 54.0 | 60.5 |
+| 0.5 | 54.0 | 61.3 | 65.6 | 53.6 | 60.1 |
+| 1 | 54.4 | 61.5 | 65.6 | 53.6 | 60.3 |
+| 2 | 53.6 | 61.3 | 65.7 | 53.5 | 60.1 |
+
+No setting differs from off by more than the spread between schedules,
+with or without revisits, so the share stays at 0. Being related to
+useful memories is a reason to keep a memory; on this data it is not a
+reason to rank it higher for a particular question. The stored support
+remains available for explaining why a memory was kept.
+
 ## Limits
 
 - One dataset. LoCoMo asks each question once, so use of a memory before
@@ -145,7 +206,7 @@ feedback (compare the tables at the top, measured before it):
   Workloads that return to the same facts more often would favour both
   mechanisms more; ones that ask about old, never-revisited details
   would favour them less.
-- The headline tables above were measured with the use lift at 0.5,
-  before the tuning below.
+- The tables at the top were measured with the use lift at 0.5 and
+  without relationships; "As shipped" below has the current defaults.
 - Retrieval only. Whether a smaller, sharper store changes answers was
   not measured.

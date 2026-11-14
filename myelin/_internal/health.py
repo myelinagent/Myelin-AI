@@ -55,11 +55,13 @@ BIAS: float = 2.0
 # Graded together with a memory's own use: support from related memories
 # that were used (see myelin._internal.relations), and how often it was
 # shown for a question without being used.
-# Weights from the memory-over-time benchmark (bench/results/lifetime.md):
-# on held-out conversations this pair ranked evidence a little higher and
-# hid fewer memories a later question needed than use and age alone.
+# Weights from the memory-over-time benchmark (bench/results/lifetime.md).
+# Related use protects memories that sit beside useful ones. Being shown
+# and not used does not count against health: a mild penalty (-0.3)
+# pruned more and ranked slightly better, but hid more of what later
+# questions needed, so it is off. It still lowers rank (cite_ranking).
 W_RELATED: float = 2.0
-W_UNUSED: float = -0.3
+W_UNUSED: float = 0.0
 # Use, related use and recency together may not outweigh one
 # contradiction (the EC-A5 rule in constants.py covers use alone).
 MAX_USE_LIFT: float = 3.4

@@ -326,6 +326,10 @@ class SqliteBackend:
                     "ALTER TABLE memories ADD COLUMN "
                     "shown_unused_count INTEGER NOT NULL DEFAULT 0"
                 )
+            if "related_support" not in self._column_names("memories"):
+                cursor.execute(
+                    "ALTER TABLE memories ADD COLUMN related_support REAL NOT NULL DEFAULT 0"
+                )
             if "index_text" not in self._column_names("memories"):
                 cursor.execute(
                     "ALTER TABLE memories ADD COLUMN index_text TEXT NOT NULL DEFAULT ''"
@@ -984,6 +988,22 @@ class SqliteBackend:
 
     # ---- v1.2 cite-event surface --------------------------------
 
+    def set_related_support(self, user_id: str, support: Mapping[str, float]) -> None:
+        """Store each memory's related support for ``user_id``; memories
+        not in ``support`` are set to zero."""
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "UPDATE memories SET related_support = 0 "
+                "WHERE user_id = ? AND related_support != 0",
+                (user_id,),
+            )
+            cur.executemany(
+                "UPDATE memories SET related_support = ? WHERE id = ?",
+                [(float(value), memory_id) for memory_id, value in support.items() if value],
+            )
+            self._conn.commit()
+
     def record_unused(self, memory_ids: Sequence[str]) -> int:
         """Count one "shown but not used" for each live memory in
         ``memory_ids``; returns how many were updated. Health is not
@@ -1255,5 +1275,6 @@ class SqliteBackend:
             cite_incorrect_count=int(row.get("cite_incorrect_count") or 0),
             last_cited_at=_iso_to_dt(row.get("last_cited_at")),
             shown_unused_count=int(row.get("shown_unused_count") or 0),
+            related_support=float(row.get("related_support") or 0.0),
             index_text=row.get("index_text") or "",
         )

@@ -228,3 +228,23 @@ def test_cite_used_does_nothing_when_cite_learning_is_off(monkeypatch):
         assert plain.get(m.id).shown_unused_count == 0
     finally:
         plain.close()
+
+
+def test_related_support_can_count_towards_rank_but_is_off_by_default(monkeypatch):
+    from myelin._internal import cite_ranking
+
+    assert cite_ranking.RELATED_SHARE == 0.0
+    assert utility(0, 0, 0, related=5.0) == 0.0
+    assert utility(1, 3, 0, related=5.0) == utility(1, 3)
+    monkeypatch.setattr(cite_ranking, "RELATED_SHARE", 1.0)
+    assert cite_ranking.utility(1, 3, 0, related=5.0) > cite_ranking.utility(1, 3)
+
+
+def test_prune_stores_related_support_on_each_memory(client):
+    talk = client.add_conversation([("user", "Ana lives in Porto."), ("assistant", "Noted.")])
+    stray = client.add("Unrelated note about the weather.")
+    client.cite(talk[0].id, answer_correct=True)
+    client.prune()
+    assert client.get(talk[1].id).related_support > 0
+    assert client.get(stray.id).related_support == 0
+    assert client.get(talk[0].id).related_support == 0  # no support from itself

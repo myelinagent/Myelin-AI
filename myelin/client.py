@@ -1401,6 +1401,11 @@ class MemoryClient:
             memories, vectors_for(target_user) if callable(vectors_for) else None
         )
 
+        # Kept on each memory so that ranking can read the same grade.
+        store_support = getattr(self._backend, "set_related_support", None)
+        if callable(store_support):
+            store_support(target_user, support)
+
         def health_of(mem: Memory) -> float:
             return memory_health(
                 mem,
@@ -1555,10 +1560,8 @@ class MemoryClient:
         Used memories are cited as useful, exactly as
         ``cite(id, answer_correct=True)``. The others are counted as
         "shown but not used": they rank lower the next time they are
-        relevant, and their health falls a little. One unneeded showing
-        does not get a memory forgotten; one that keeps being retrieved
-        and never used, with no used neighbours, fades sooner than its
-        age alone would have it.
+        relevant, and their health is left alone, so being unneeded for
+        a question never leads to a memory being forgotten.
 
         Returns ``{"used": n, "unused": m}``. No-op (zeros) when cite
         learning is off.

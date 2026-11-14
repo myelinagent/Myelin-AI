@@ -171,3 +171,19 @@ def test_lifetime_benchmark_replays_a_conversation_in_time_order(tmp_path, capsy
     out = capsys.readouterr().out
     for arm in lifetime.ARMS:
         assert f"| {arm} |" in out
+
+
+def test_lifetime_benchmark_can_ask_each_question_again(tmp_path, capsys):
+    from bench import lifetime
+
+    once = lifetime.replay(SAMPLE, seed=0, decay=True, feedback=True)
+    again = lifetime.replay(SAMPLE, seed=0, decay=True, feedback=True, revisits=2)
+    assert len(again["outcomes"]) == 3 * len(once["outcomes"])
+    assert sorted({o["visit"] for o in again["outcomes"]}) == [0, 1, 2]
+    summary = lifetime.summarize([again])
+    assert 0.0 <= summary["top5_repeat"] <= 100.0
+
+    data = tmp_path / "locomo.json"
+    data.write_text(json.dumps([SAMPLE]))
+    assert lifetime.main(["--data", str(data), "--seeds", "1", "--revisits", "1"]) == 0
+    assert "Repeat askings" in capsys.readouterr().out
