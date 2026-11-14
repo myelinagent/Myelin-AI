@@ -242,3 +242,40 @@ def test_vector_ranking_top_k_matches_a_full_sort():
             assert backend._vector_ranking("u", query, k) == full[:k]
     finally:
         backend.close()
+
+
+def test_fusion_orders_the_head_by_balanced_ranks_and_keeps_scores_decreasing():
+    from myelin.backends import sqlite as sq
+
+    words = [f"m{i}" for i in range(30)]
+    vectors = list(reversed(words))
+    balanced = sq._fuse(words, vectors, 1.0, 1.0, sq._HEAD_RRF_K)
+    heavy = sq._fuse(words, vectors, sq._LEXICAL_WEIGHT, sq._VECTOR_WEIGHT, sq._RRF_K)
+    # Equal weights: the best of each ranking tie for the top. Vector-heavy:
+    # the vector ranking's best is alone on top.
+    assert balanced["m0"] == balanced["m29"] == max(balanced.values())
+    assert max(heavy, key=heavy.get) == "m29"
+
+
+def test_hybrid_results_come_back_in_decreasing_score_order():
+    import random
+
+    from myelin.backends.sqlite import SqliteBackend
+
+    rng = random.Random(2)
+    backend = SqliteBackend()
+    try:
+        backend.add_memories(
+            [
+                {"content": f"note {i} about tea and travel number {i}", "user_id": "u",
+                 "vector": [rng.gauss(0, 1) for _ in range(8)]}
+                for i in range(80)
+            ]
+        )
+        hits = backend.search("tea travel", "u", 60, query_vector=[1.0] + [0.0] * 7)
+        scores = [h.score for h in hits]
+        assert len(hits) == 60
+        assert scores == sorted(scores, reverse=True)
+        assert len({h.memory.id for h in hits}) == 60
+    finally:
+        backend.close()
