@@ -6,6 +6,21 @@ project uses semantic versioning.
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-11-14
+
+Retrieval that an answering model can use directly, forgetting that
+stops at quarantine, feedback that says which memory was used, one
+health grade over age, use and relationships, and a benchmark harness
+that reproduces every number quoted. Before upgrading, note:
+
+- **Python 3.11 or newer** is required (the code already needed it).
+- **`prune()` no longer deletes.** It quarantines; pass `tombstone=True`
+  for the old behaviour.
+- **`recall()`/`search()` rank differently**: BM25 with stemming,
+  optional hybrid search, cite-informed ranking when cite learning is on.
+- Existing databases are migrated in place when opened (new columns and
+  indexes; no data is removed).
+
 Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Changed

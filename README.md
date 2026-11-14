@@ -16,6 +16,26 @@ Requires Python 3.10+. The import name remains `myelin`.
 
 ---
 
+## What's new in 1.5.0
+
+| Area | 1.4 | 1.5 |
+|---|---|---|
+| Finding memories | substring-style scan, top k | BM25 with stemming, optional hybrid search (`embedder=`), `recall(token_budget=)` with query-focused excerpts |
+| Answering | bring your own prompt | `format_context`, `build_answer_prompt` |
+| Loading history | one `add()` at a time | `add_many`, `add_conversation` (optionally extracting dated facts) |
+| Forgetting | `prune()` deleted | quarantine first; deletion only on request; outdated values superseded, not removed |
+| Feedback | `cite(id, answer_correct=)` per memory | `cite_used(results, used)`: the answering model names what it used |
+| Health | age and own use | one grade over age, use and related memories |
+| Benchmarks | none in the repo | `bench/`: LongMemEval, LoCoMo, cite feedback, memory over time, scale |
+
+Measured with the harness in this repository: LongMemEval-S 90.1% with
+`gpt-5-mini` (four runs) and 88.6% with `gpt-4o`; LoCoMo 92.6%. Release
+1.4.0 scored 60.4% on LongMemEval-S with `gpt-4o-mini`. Details and
+caveats: [`bench/results/final.md`](bench/results/final.md).
+
+Requires Python 3.11+. `prune()` now quarantines instead of deleting;
+see the [changelog](CHANGELOG.md) before upgrading.
+
 ## What's new in 1.4.0
 
 Three load-bearing mechanisms that were silently no-oping in 1.3 are now
@@ -109,7 +129,7 @@ of the prompt.
 
 ---
 
-## Answering from memory (unreleased, on `main`)
+## Answering from memory (1.5)
 
 Three steps turn stored memories into an answer: recall what fits a token
 budget, lay it out in date order, and wrap it in a prompt that tells the
@@ -307,7 +327,7 @@ fix automatically.
 
 ## Apoptosis — `client.prune()`
 
-On `main` (unreleased), forgetting stops at quarantine. `prune()` retires
+Since 1.5, forgetting stops at quarantine. `prune()` retires
 facts that a later fact has replaced, hides unhealthy facts from search, and
 removes nothing unless you ask.
 
@@ -456,7 +476,7 @@ Contradiction-dominance invariant: a poisoned memory with 100 correct cites
 still quarantines on a single contradiction (asserted at `constants.py`
 import time).
 
-On `main` (unreleased), cites also nudge ranking: among memories relevant to
+Since 1.5, cites also nudge ranking: among memories relevant to
 a query, those cited mostly in correct answers move up and those cited in
 incorrect ones move down. Uncited memories keep their position, feedback
 never pulls in a memory the query did not match, and one cite has little
