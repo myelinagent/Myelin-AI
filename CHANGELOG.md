@@ -83,6 +83,12 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Added
 
+- **`python -m bench.lifetime --revisits N`** asks each question again at
+  later sessions. On repeat askings, cite feedback is worth 9.6 points of
+  top-5 evidence, and it cuts the memories decay wrongly hides from 14.1%
+  of askings to 2.0%.
+- **`Memory.related_support`**: how much a memory's related memories have
+  been used, as of the last `prune()`.
 - **Results on `main`** (`bench/results/final.md`): LongMemEval-S 90.1%
   with `gpt-5-mini` (four runs) and 88.6% with `gpt-4o`; LoCoMo 92.6%
   with `gpt-5-mini` and facts indexed.

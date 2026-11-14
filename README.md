@@ -508,6 +508,11 @@ cannot survive on popularity.
 
 Measured by replaying months-long conversations on a simulated clock
 (`python -m bench.lifetime`, [`bench/results/lifetime.md`](bench/results/lifetime.md)).
+When questions come back to the same facts, forgetting on its own had
+hidden a memory that was needed on 14.1% of repeat askings; with cite
+feedback keeping used memories healthy, 2.0%, with a tenth of the store
+pruned. Feedback also put all of a question's evidence in the top 5 for
+53.7% of repeat askings against 44.1%.
 
 ---
 
