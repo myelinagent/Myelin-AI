@@ -44,6 +44,9 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Added
 
+- **LoCoMo runner** (`python -m bench.locomo`): 89.0% judged correct with
+  `gpt-5-mini` answering and 78.7% with `gpt-4o-mini`, hybrid search,
+  6,000-token context. See `bench/results/locomo.md`.
 - **`recall(query, token_budget=6000)`** returns as many top results as fit
   a token budget, for building an answering model's context. With it, 90.9%
   of LongMemEval-S questions have all their evidence in context.

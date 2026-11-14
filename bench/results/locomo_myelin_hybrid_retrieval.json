@@ -1,0 +1,36 @@
+{
+  "manifest": {
+    "benchmark": "LoCoMo",
+    "data_file": "locomo10.json",
+    "data_sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4",
+    "conversations": 10,
+    "questions": 1540,
+    "system": "myelin",
+    "granularity": "utterance",
+    "token_budget": 6000,
+    "max_turn_tokens": 300,
+    "whole_turns": 3,
+    "embedder": "minishlab/potion-retrieval-32M",
+    "max_answer_tokens": 800,
+    "answerer": "",
+    "judge": "",
+    "prompt_version": "myelin-reasoned-v2",
+    "temperature": 0.0,
+    "git_commit": "ede5cba9972f71bcb64bba21a7a9ded8ccb0a745",
+    "started_at": "2026-11-14T05:41:59+00:00"
+  },
+  "answered": 1540,
+  "judged": 0,
+  "retrieval": {
+    "evidence_all": 0.8027433050293925,
+    "evidence_share": 0.8689309895158882,
+    "questions_with_evidence": 1531
+  },
+  "cost": {
+    "answerer_prompt_tokens": 0,
+    "answerer_completion_tokens": 0,
+    "mean_context_tokens": null,
+    "mean_context_turns": 190.63571428571427,
+    "mean_retrieve_seconds": 0.00486291596561174
+  }
+}
