@@ -513,7 +513,7 @@ Loopback only by default. No auth — wrap behind a reverse proxy if exposed.
 Bench harnesses can assert `tool_invocations > 0` before treating an
 "all-PASS" result as non-vacuous.
 
-Endpoints: `/tools/memory_{search,get,store,update,forget,consolidate,prune}`,
+Endpoints: `/tools/memory_{search,recall,get,store,store_many,update,forget,cite_used,consolidate,prune}`,
 `/hooks/{before_agent_start,agent_end}`, `/admin/reset`, `/health`,
 `/metrics` (1.4).
 

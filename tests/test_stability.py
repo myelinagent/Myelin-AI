@@ -497,3 +497,40 @@ def test_sidecar_persists_to_a_file_and_reset_clears_it(tmp_path):
         assert sidecar.tool_memory_search({"query": "oolong"}) == {"hits": []}
     finally:
         sidecar.build_server("127.0.0.1", 0, db_path=":memory:").server_close()
+
+
+def test_sidecar_store_many_recall_and_cite_used(server, monkeypatch):
+    monkeypatch.setenv("MYELIN_CITE_LEARNING", "1")
+    sidecar._reset_client()
+    base, _ = server
+    status, stored = _post(
+        base, "/tools/memory_store_many",
+        json.dumps({"items": [
+            "Scott drinks oolong tea",
+            {"content": "Scott bought a tea strainer", "t_valid": "2025-03-02T00:00:00+00:00"},
+        ]}).encode(),
+    )
+    assert status == 200 and len(stored["memories"]) == 2
+    assert stored["memories"][1]["t_valid"].startswith("2025-03-02")
+
+    status, recalled = _post(
+        base, "/tools/memory_recall",
+        json.dumps({"query": "tea", "token_budget": 500, "numbered": True}).encode(),
+    )
+    assert status == 200 and len(recalled["hits"]) == 2
+    assert "[1] " in recalled["context"] and "[2] " in recalled["context"]
+
+    shown = [hit["memory"]["id"] for hit in recalled["hits"]]
+    status, cited = _post(
+        base, "/tools/memory_cite_used",
+        json.dumps({"shown": shown, "used": [1], "query": "tea"}).encode(),
+    )
+    assert status == 200
+    assert cited == {"used": 1, "unused": 1, "enabled": True}
+    status, got = _post(base, "/tools/memory_get", json.dumps({"memory_id": shown[1]}).encode())
+    assert got["memory"]["shown_unused_count"] == 1
+
+    status, _ = _post(
+        base, "/tools/memory_cite_used", json.dumps({"shown": ["nope"], "used": []}).encode()
+    )
+    assert status == 404
