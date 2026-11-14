@@ -665,24 +665,41 @@ class SqliteBackend:
         match = _fts_query(query)
         if not match:
             return []
-        sql = (
-            "SELECT r.memory_id, bm25(memories_fts) AS rank "
-            "FROM memories_fts JOIN memories_fts_rows r "
-            "ON r.fts_rowid = memories_fts.rowid "
-            "JOIN memories m ON m.id = r.memory_id "
-            "WHERE memories_fts MATCH ? AND memories_fts.user_id = ?"
-        )
-        params: list[Any] = [match, user_id]
-        if healthy_only:
-            sql += " AND m.health_state = 'healthy'"
-        if current_only:
-            sql += " AND m.t_invalid IS NULL"
-        sql += " ORDER BY rank, r.memory_id"
-        if current_only:
-            sql += " LIMIT ?"
-            params.append(top_k)
+        def run(shortlist: int | None) -> list[Any]:
+            # With a shortlist, the best matches are picked inside the
+            # index before any memory row is read; without one, every
+            # match is joined, which is slow when the query's words are
+            # common in a large store.
+            inner = (
+                "SELECT rowid AS fts_rowid, bm25(memories_fts) AS rank "
+                "FROM memories_fts WHERE memories_fts MATCH ? AND user_id = ?"
+            )
+            params: list[Any] = [match, user_id]
+            if shortlist is not None:
+                inner += " ORDER BY rank LIMIT ?"
+                params.append(shortlist)
+            sql = (
+                f"SELECT r.memory_id, f.rank FROM ({inner}) f "
+                "JOIN memories_fts_rows r ON r.fts_rowid = f.fts_rowid "
+                "JOIN memories m ON m.id = r.memory_id WHERE 1"
+            )
+            if healthy_only:
+                sql += " AND m.health_state = 'healthy'"
+            if current_only:
+                sql += " AND m.t_invalid IS NULL"
+            sql += " ORDER BY f.rank, r.memory_id"
+            if current_only:
+                sql += " LIMIT ?"
+                params.append(top_k)
+            return self._conn.execute(sql, params).fetchall()
+
         with self._lock:
-            ranked = self._conn.execute(sql, params).fetchall()
+            # Point-in-time searches need every match (see docstring).
+            shortlist = top_k * 2 + 50 if current_only else None
+            ranked = run(shortlist)
+            if shortlist is not None and len(ranked) < top_k:
+                # Filters removed too many of the shortlist; do it in full.
+                ranked = run(None)
             memories = {m.id: m for m in self.get_batch([r[0] for r in ranked])}
         results: list[SearchResult] = []
         for memory_id, rank in ranked:

@@ -341,3 +341,17 @@ def test_recall_keeps_the_best_ranked_results_whole(client):
 def test_recall_rejects_a_non_positive_excerpt_size(client):
     with pytest.raises(ValueError, match="max_result_tokens"):
         client.recall("tea", max_result_tokens=0)
+
+
+def test_search_still_finds_matches_ranked_below_many_hidden_ones(client):
+    """The index shortlist must not hide results when most of the best
+    matches are filtered out."""
+    hidden = [client.add("green tea green tea green tea") for _ in range(120)]
+    for mem in hidden:
+        client._backend.transition_state(
+            mem.id, new_state="quarantined", quarantine_entered_at=datetime.now(UTC)
+        )
+    kept = client.add("I sometimes drink tea with a long tail of other unrelated words here")
+    hits = client.search("green tea", top_k=5)
+    assert [h.memory.id for h in hits] == [kept.id]
+    assert len(client.search("green tea", top_k=5, include_quarantined=True)) == 5

@@ -131,3 +131,13 @@ dataset needs a new `--out`.
 Recorded results are in `bench/results/`. On LongMemEval-S a 6,000-token
 budget scored higher with `gpt-4o` than 4,000 or 8,000; see
 `longmemeval_s_stage2.md`.
+
+## Scale
+
+```bash
+python -m bench.scale --sizes 5000 50000 200000
+python -m bench.scale --sizes 5000 50000 --embedder minishlab/potion-retrieval-32M
+```
+
+Write throughput and recall latency on synthetic text; needs no data and no
+model. Results: [`results/scale.md`](results/scale.md).

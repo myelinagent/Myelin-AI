@@ -375,3 +375,13 @@ def test_fact_extraction_script_is_resumable(dataset, tmp_path, monkeypatch):
     assert len(ef.load_cache(out)) == 3
     assert ef.main(argv) == 0
     assert len(calls) == 3
+
+
+def test_scale_benchmark_runs_on_a_small_store(capsys):
+    from bench import scale
+
+    row = scale.measure(300, queries=5)
+    assert row["memories"] == 300
+    assert row["adds_per_second"] > 0 and row["recall_p95_ms"] >= row["recall_p50_ms"] > 0
+    assert scale.main(["--sizes", "200", "--queries", "3"]) == 0
+    assert "| 200 |" in capsys.readouterr().out
