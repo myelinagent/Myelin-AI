@@ -385,6 +385,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "token_budget": args.token_budget,
         "max_turn_tokens": args.max_turn_tokens,
         "whole_turns": args.whole_turns,
+        "embedder": args.embedder,
         "answerer": args.answerer,
         "judge": args.judge,
         "prompt_version": PROMPT_VERSIONS[args.prompt],
@@ -397,9 +398,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         previous = json.loads(manifest_path.read_text())
         pinned = (
             "data_sha256", "system", "top_k", "token_budget", "max_turn_tokens",
-            "whole_turns", "answerer", "prompt_version",
+            "whole_turns", "embedder", "answerer", "prompt_version",
         )
-        changed = [k for k in pinned if previous.get(k, 0) != manifest[k]]
+        changed = [k for k in pinned if (previous.get(k) or 0) != (manifest[k] or 0)]
         if changed:
             print(
                 f"{out} holds a run with different settings ({', '.join(changed)}); "
@@ -409,6 +410,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             return 2
         manifest["started_at"] = previous.get("started_at", manifest["started_at"])
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    if args.embedder:
+        if args.system != "myelin":
+            print("--embedder applies to --system myelin only", file=sys.stderr)
+            return 2
+        from myelin.embedders import StaticEmbedder
+
+        SYSTEMS["myelin"].embedder = StaticEmbedder(args.embedder)
 
     answers = JsonlLog(out / "answers.jsonl")
     answerer = ChatClient(args.answerer) if args.answerer else None
@@ -645,6 +654,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--prompt", default="reasoned", choices=["v1", *ANSWER_STYLES],
         help="answer prompt: Myelin's 'reasoned' or 'direct', or 'v1' (first baselines)",
+    )
+    run.add_argument(
+        "--embedder", default="",
+        help="static embedding model for hybrid search, e.g. minishlab/potion-retrieval-32M",
     )
     run.add_argument("--limit", type=int, default=0, help="only the first N questions")
     run.add_argument("--workers", type=int, default=8)

@@ -14,7 +14,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from myelin import MemoryClient
 
@@ -50,6 +50,8 @@ class MyelinSystem:
     """Myelin as shipped: one memory per turn, default search."""
 
     name = "myelin"
+    # Shared by every instance so a model is loaded once per process.
+    embedder: Any = None
 
     def __init__(self) -> None:
         self._client: MemoryClient | None = None
@@ -58,7 +60,7 @@ class MyelinSystem:
     def reset(self) -> None:
         if self._client is not None:
             self._client.close()
-        self._client = MemoryClient(user_id=_USER)
+        self._client = MemoryClient(user_id=_USER, embedder=type(self).embedder)
         self._turns = {}
 
     def ingest(self, turns: list[Turn]) -> None:

@@ -32,6 +32,17 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
   exported. End to end on LongMemEval-S with `gpt-4o-mini` answering,
   accuracy went from 60.4% (1.4.0 search, top 10) to 64.8%
   (`bench/results/longmemeval_s_accuracy.md`).
+- **Hybrid search: `MemoryClient(embedder=...)`.** With an embedder, each
+  memory is embedded when written and each query when searched, and the
+  vector ranking is fused with BM25 (reciprocal-rank fusion, vector weight
+  2). Vectors live in SQLite and are compared by a full scan; numpy is used
+  when installed and is not required. `myelin.embedders.StaticEmbedder`
+  (extra `myelin-ai[static]`) is a CPU-only model2vec embedder.
+  `backfill_embeddings()` embeds memories written earlier. If the embedder
+  raises, writes and searches continue lexically. On LongMemEval-S the share
+  of questions with every evidence turn in the answerer's context rose from
+  85.3% to 92.3%, and accuracy with `gpt-4o` answering from 82.8% to 87.4%
+  (`bench/results/longmemeval_s_stage2.md`).
 - **`build_answer_prompt(history, question, now=..., style=...)`** wraps
   recalled context in instructions for the cases where answering models go
   wrong with memory: changed facts, totals and orderings, dates relative to

@@ -1,0 +1,74 @@
+{
+  "manifest": {
+    "benchmark": "LongMemEval",
+    "data_file": "longmemeval_s_cleaned.json",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "questions": 500,
+    "system": "myelin",
+    "granularity": "turn",
+    "top_k": 10,
+    "token_budget": 6000,
+    "max_turn_tokens": 300,
+    "whole_turns": 3,
+    "embedder": "minishlab/potion-retrieval-32M",
+    "answerer": "openai/gpt-4o",
+    "judge": "openai/gpt-4o",
+    "prompt_version": "myelin-reasoned-v2",
+    "temperature": 0.0,
+    "git_commit": "adba66d39e8b62f721760bcf83296e287c890b54",
+    "started_at": "2026-11-13T23:56:42+00:00"
+  },
+  "answered": 500,
+  "judged": 500,
+  "accuracy": {
+    "overall": 0.874,
+    "task_averaged": 0.8681527536790695,
+    "abstention": 0.6666666666666666,
+    "by_type": {
+      "single-session-user": 0.9857142857142858,
+      "single-session-assistant": 0.9642857142857143,
+      "single-session-preference": 0.6666666666666666,
+      "multi-session": 0.8120300751879699,
+      "temporal-reasoning": 0.8571428571428571,
+      "knowledge-update": 0.9230769230769231
+    },
+    "counts": {
+      "single-session-user": 70,
+      "single-session-assistant": 56,
+      "single-session-preference": 30,
+      "multi-session": 133,
+      "temporal-reasoning": 133,
+      "knowledge-update": 78
+    }
+  },
+  "session_recall": {
+    "all@5": 0.7957446808510639,
+    "all@context": 0.9872340425531915,
+    "evidence_turns_all@context": 0.9234042553191489,
+    "any@50": 1.0,
+    "all@50": 0.9872340425531915,
+    "any@5": 0.9702127659574468,
+    "evidence_turns_share@context": 0.9572695035460993,
+    "any@10": 0.9829787234042553,
+    "all@10": 0.8957446808510638,
+    "questions": 470,
+    "all@10_by_type": {
+      "single-session-user": 1.0,
+      "single-session-assistant": 1.0,
+      "single-session-preference": 0.9333333333333333,
+      "multi-session": 0.859504132231405,
+      "temporal-reasoning": 0.7874015748031497,
+      "knowledge-update": 0.9583333333333334
+    }
+  },
+  "cost": {
+    "answerer_prompt_tokens": 2838280,
+    "answerer_completion_tokens": 58765,
+    "mean_context_tokens": 5676.56,
+    "mean_context_tokens_estimate": 5902.556,
+    "mean_context_turns": 45.488,
+    "mean_ingest_seconds": 3.0698665461699974,
+    "mean_retrieve_seconds": 0.17658246611199774,
+    "mean_answer_seconds": 1.7514033875379955
+  }
+}
