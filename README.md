@@ -484,25 +484,25 @@ answer = strip_used(reply)
 
 Memories the answer used are cited as useful. The others are counted as
 shown but not used: they rank lower the next time they are relevant, and
-their health falls a little (see "One grade" below). One unneeded showing
-does not get a memory forgotten. With `gpt-4o-mini` naming what it used, the
+their health is untouched, so being unneeded for a question never leads
+to a memory being forgotten. With `gpt-4o-mini` naming what it used, the
 gain matched the upper bound (47.8% against 47.7%).
 
 ### One grade: age, use and relationships
 
 `prune()` decides what to hide from a single health grade per memory, in
-which four things are weighed together:
+which three things are weighed together:
 
 | Signal | Effect on health |
 |---|---|
 | **Age** | falls once a memory is more than a month old |
 | **Use** | rises each time the memory is cited as used; recent use counts extra |
 | **Relationships** | rises when its neighbours are used: messages close to it in the same conversation (`metadata["session_id"]` and `"turn"`, which `add_conversation` records), and memories with similar meaning when embeddings are stored |
-| **Shown but unused** | falls a little each time it is retrieved for a question and not used |
 
 So a message nobody cited outlives an unrelated one of the same age if
-it sits beside one that keeps proving useful, and a memory that keeps
-surfacing without helping fades sooner. Use and related use together are
+it sits beside one that keeps proving useful. Being retrieved and not
+used lowers a memory's rank but not its health. Use and related use
+together are
 capped below the weight of one contradiction, so a contradicted fact
 cannot survive on popularity.
 

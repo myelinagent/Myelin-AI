@@ -95,9 +95,8 @@ class Memory:
     last_cited_at: datetime | None = None
     # Times this memory was shown for a question and the answer did not
     # use it (``MemoryClient.cite_used``). Lowers its rank among relevant
-    # memories and, mildly, its health: far less than a wrong answer
-    # (``cite_incorrect_count``) does, and offset by any use of the
-    # memory itself or of the memories it is related to.
+    # memories; unlike ``cite_incorrect_count`` it does not count against
+    # its health, so it never leads to forgetting.
     shown_unused_count: int = 0
     # Extra text this memory is findable by (search keys, extracted
     # facts). Indexed for search alongside ``content``; never shown as

@@ -46,14 +46,14 @@ def test_support_reaches_similar_memories():
     assert neighbour_support(memories) == {}  # no vectors, no sessions: no edges
 
 
-def test_health_grades_use_related_use_and_unused_showings_together():
+def test_health_grades_use_and_related_use_together_and_ignores_unused_showings():
     old = {"age_days": 200}
     alone = health.memory_health(_memory("a", **old), now=NOW)
     related = health.memory_health(_memory("a", **old), now=NOW, related_support=2.0)
     used = health.memory_health(_memory("a", used=3, **old), now=NOW)
     unused = health.memory_health(_memory("a", unused=6, **old), now=NOW)
     assert alone < health.QUARANTINE_THRESHOLD < related
-    assert used > alone > unused
+    assert used > alone == unused  # shown-but-unused lowers rank, not health
     fresh = health.memory_health(_memory("a"), now=NOW)
     assert fresh > alone  # age still counts
 

@@ -20,6 +20,11 @@ Four ways of running the same timeline are compared:
 Reported per arm: how often all of a question's evidence is in the top
 results, how often decay had already hidden a memory the question
 needed, and how much of the store is still searchable at the end.
+
+LoCoMo asks each question once. ``--revisits N`` asks each one again N
+more times at later sessions, as a user returning to the same facts
+would, and reports those repeat askings separately: that is where a
+memory's earlier use can pay off.
 """
 
 from __future__ import annotations
@@ -54,6 +59,7 @@ def replay(
     feedback: bool,
     max_lag: int = 6,
     embedder: Any = None,
+    revisits: int = 0,
 ) -> dict[str, Any]:
     """Run one conversation's timeline; return per-question outcomes and
     the state of the store at the end."""
@@ -72,7 +78,12 @@ def replay(
             continue
         last = order.index(max(session_of[e] for e in evidence))
         ask_at = min(len(order) - 1, last + rng.randint(0, max_lag))
-        due[ask_at].append({**qa, "evidence": evidence, "lag": ask_at - last})
+        due[ask_at].append({**qa, "evidence": evidence, "lag": ask_at - last, "visit": 0})
+        for visit in range(1, revisits + 1):
+            ask_at = min(len(order) - 1, ask_at + rng.randint(1, max_lag))
+            due[ask_at].append(
+                {**qa, "evidence": evidence, "lag": ask_at - last, "visit": visit}
+            )
 
     now = [sessions[order[0]][0].session_date]
     client = MemoryClient(
@@ -110,6 +121,7 @@ def replay(
                 outcomes.append(
                     {
                         "lag": qa["lag"],
+                        "visit": qa["visit"],
                         "hidden": hidden,
                         **{f"top{k}": wanted <= set(ranked[:k]) for k in KS},
                     }
@@ -129,6 +141,7 @@ def replay(
 def summarize(runs: list[dict[str, Any]]) -> dict[str, float]:
     outcomes = [o for run in runs for o in run["outcomes"]]
     late = [o for o in outcomes if o["lag"] >= 3]
+    repeats = [o for o in outcomes if o["visit"] > 0]
 
     def share(rows: list[dict[str, Any]], key: str) -> float:
         return 100 * sum(bool(r[key]) for r in rows) / len(rows) if rows else 0.0
@@ -136,6 +149,9 @@ def summarize(runs: list[dict[str, Any]]) -> dict[str, float]:
     return {
         **{f"top{k}": share(outcomes, f"top{k}") for k in KS},
         "top10_late": share(late, "top10"),
+        "top5_repeat": share(repeats, "top5"),
+        "top10_repeat": share(repeats, "top10"),
+        "hidden_repeat": share(repeats, "hidden"),
         "hidden": share(outcomes, "hidden"),
         "searchable": 100 * sum(r["searchable"] for r in runs) / sum(r["stored"] for r in runs),
         "questions": float(len(outcomes)),
@@ -152,6 +168,13 @@ COLUMNS = (
 )
 
 
+REPEAT_COLUMNS = (
+    ("top5_repeat", "Repeat askings: top 5"),
+    ("top10_repeat", "top 10"),
+    ("hidden_repeat", "needed a hidden memory"),
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m bench.lifetime", description=__doc__)
     parser.add_argument("--data", required=True, help="path to locomo10.json")
@@ -159,6 +182,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seeds", type=int, default=3, help="random question schedules")
     parser.add_argument("--max-lag", type=int, default=6, help="sessions a question may wait")
     parser.add_argument("--limit", type=int, default=0, help="only the first N conversations")
+    parser.add_argument(
+        "--revisits", type=int, default=0,
+        help="ask each question this many more times at later sessions",
+    )
     args = parser.parse_args(argv)
     samples = json.loads(Path(args.data).read_text())
     if args.limit:
@@ -169,19 +196,20 @@ def main(argv: list[str] | None = None) -> int:
 
         embedder = StaticEmbedder(args.embedder)
 
-    print("| | " + " | ".join(title for _, title in COLUMNS) + " |")
-    print("|---|" + "---:|" * len(COLUMNS))
+    columns = COLUMNS + (REPEAT_COLUMNS if args.revisits else ())
+    print("| | " + " | ".join(title for _, title in columns) + " |")
+    print("|---|" + "---:|" * len(columns))
     for arm, (decay, feedback) in ARMS.items():
         per_seed = [
             summarize([
                 replay(s, seed, decay=decay, feedback=feedback,
-                       max_lag=args.max_lag, embedder=embedder)
+                       max_lag=args.max_lag, embedder=embedder, revisits=args.revisits)
                 for s in samples
             ])
             for seed in range(args.seeds)
         ]
         cells = []
-        for key, _ in COLUMNS:
+        for key, _ in columns:
             values = [run[key] for run in per_seed]
             spread = f" ± {statistics.stdev(values):.1f}" if len(values) > 1 else ""
             cells.append(f"{statistics.mean(values):.1f}{spread}")

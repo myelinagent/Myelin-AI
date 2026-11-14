@@ -1555,10 +1555,8 @@ class MemoryClient:
         Used memories are cited as useful, exactly as
         ``cite(id, answer_correct=True)``. The others are counted as
         "shown but not used": they rank lower the next time they are
-        relevant, and their health falls a little. One unneeded showing
-        does not get a memory forgotten; one that keeps being retrieved
-        and never used, with no used neighbours, fades sooner than its
-        age alone would have it.
+        relevant, and their health is left alone, so being unneeded for
+        a question never leads to a memory being forgotten.
 
         Returns ``{"used": n, "unused": m}``. No-op (zeros) when cite
         learning is off.
