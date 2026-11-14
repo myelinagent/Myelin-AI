@@ -98,6 +98,9 @@ class Memory:
     # memories; unlike ``cite_incorrect_count`` it does not count against
     # its health, so it never leads to forgetting.
     shown_unused_count: int = 0
+    # How much the memories related to this one have been used, as of the
+    # last ``prune()`` (see ``myelin._internal.relations``).
+    related_support: float = 0.0
     # Extra text this memory is findable by (search keys, extracted
     # facts). Indexed for search alongside ``content``; never shown as
     # the memory's content.

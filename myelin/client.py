@@ -1401,6 +1401,11 @@ class MemoryClient:
             memories, vectors_for(target_user) if callable(vectors_for) else None
         )
 
+        # Kept on each memory so that ranking can read the same grade.
+        store_support = getattr(self._backend, "set_related_support", None)
+        if callable(store_support):
+            store_support(target_user, support)
+
         def health_of(mem: Memory) -> float:
             return memory_health(
                 mem,

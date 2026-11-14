@@ -37,6 +37,11 @@ UTILITY_WEIGHT: float = 1.0
 FULL_CONFIDENCE_CITES: int = 5
 # The pool re-ranked is this many times the number of results wanted.
 POOL_FACTOR: int = 3
+# How much the use of related memories counts towards a memory's own
+# record, as a share of a useful cite per unit of related support (the
+# same support the health grade reads). 0 leaves ranking on a memory's
+# own record only.
+RELATED_SHARE: float = 0.0
 POOL_MIN_EXTRA: int = 10
 
 
@@ -45,14 +50,14 @@ def pool_size(top_k: int) -> int:
     return max(top_k * POOL_FACTOR, top_k + POOL_MIN_EXTRA)
 
 
-def utility(correct: int, incorrect: int, unused: int = 0) -> float:
+def utility(correct: float, incorrect: int, unused: int = 0, related: float = 0.0) -> float:
     """Feedback record as a number in (-1, 1): positive for memories that
     mostly led to right answers, negative for wrong, 0 with no record.
 
     The success rate is smoothed (one imaginary right and one imaginary
     wrong answer) and scaled by how much evidence there is.
     """
-    correct = max(0, correct)
+    correct = max(0, correct) + RELATED_SHARE * max(0.0, related)
     # Shown for a question and not used counts against a memory's rank
     # the same way a wrong answer does: it took a place something
     # useful could have had.
@@ -80,6 +85,7 @@ def rerank_by_cites(
             r.memory.cite_correct_count,
             r.memory.cite_incorrect_count,
             r.memory.shown_unused_count,
+            r.memory.related_support,
         )
         for r in pool
     ]
