@@ -81,8 +81,11 @@ search, no model at question time.
 | 6,000 | 80.3 | 87.9 |
 
 With facts indexed, a 3,000-token context holds as much of the evidence
-as a 6,000-token one without them. Answer accuracy at the smaller
-budgets has not been measured.
+as a 6,000-token one without them, and answers hold up: with
+`gpt-4o-mini` answering and facts indexed, a 3,000-token budget scores
+82.2% against 82.4% at 6,000 tokens (and 78.7% at 6,000 without facts).
+Prompts averaged 3,653 tokens instead of 6,251. Not measured with
+`gpt-5-mini`.
 
 ## What the numbers say
 
