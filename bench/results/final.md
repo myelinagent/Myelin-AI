@@ -102,6 +102,9 @@ Zep is the only entry whose published scores cannot be reproduced with
 freely available code. The answering and judging models are paid APIs
 for every system, this one included.
 
+LoCoMo is licensed CC BY-NC 4.0 (non-commercial) and LongMemEval MIT;
+neither is redistributed in this repository.
+
 An independent audit of LoCoMo found 6.4% of the answer key wrong and
 a judge that accepts many wrong answers; a perfect system would score
 about 93.6.

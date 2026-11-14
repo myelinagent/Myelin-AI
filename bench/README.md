@@ -6,7 +6,8 @@ Myelin itself.
 
 ## LongMemEval
 
-Get the data (about 280 MB):
+Get the data (about 280 MB; MIT licence, see
+[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)):
 
 ```bash
 curl -L -o longmemeval_s_cleaned.json https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json

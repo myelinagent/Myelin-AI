@@ -33,13 +33,18 @@ Every table can be regenerated with the commands in `bench/README.md`.
 
 - [ ] Authors, affiliation and contact are placeholders.
 - [ ] The protocol has no name yet; the code calls it `bench.lifetime`.
-- [ ] `refs.bib` was written from memory and from pages seen while
-      drafting: check every title, author list, venue and year. The
-      Hindsight entry has no author list.
-- [ ] Other systems' scores are quoted as their authors report them;
-      re-check them against the sources on the day of submission.
-- [ ] LoCoMo is CC BY-NC 4.0: check that the intended use of the
-      results is compatible with it.
+- [ ] `refs.bib` was checked against primary sources on 2026-11-14.
+      Two details are still to confirm by hand (noted at the top of the
+      file): the BM25 survey's volume and pages, and the exact title of
+      the LoCoMo audit post.
+- [ ] Other systems' scores were re-checked against their sources on
+      2026-11-14 (`bench/results/final.md`); they change often, so check
+      again on the day of submission and read the decimals by eye.
+- [ ] LoCoMo is CC BY-NC 4.0. Reporting its scores in a preprint is
+      the use it was released for. Using them in the README of a
+      company-owned library is a grey area, and in marketing for a paid
+      product the clearest risk: ask counsel, or Snap Research, first.
+      LongMemEval is MIT and carries no such limit.
 - [ ] Consider adding a figure of the protocol's timeline and a plot of
       needed-but-hidden against store pruned from the decay sweep.
 - [ ] The limitations section lists what a reviewer is likely to ask
