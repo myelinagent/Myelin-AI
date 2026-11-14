@@ -31,8 +31,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from bench.llm import ChatClient, LLMError
 from bench.extract_facts import load_cache, session_key
+from bench.llm import ChatClient, LLMError
 from bench.systems import SYSTEMS, Turn
 from myelin.context import estimate_tokens, excerpt
 from myelin.prompts import ANSWER_STYLES, build_answer_prompt
@@ -211,7 +211,7 @@ def within_budget(
             turn = dataclasses.replace(
                 turn, content=excerpt(turn.content, question, max_turn_tokens)
             )
-        cost = estimate_tokens(turn.text)
+        cost = estimate_tokens(_shown(turn))  # facts shown under a turn count too
         if kept and used + cost > token_budget:
             break
         kept.append(turn)

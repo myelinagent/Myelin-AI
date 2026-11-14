@@ -201,3 +201,30 @@ def test_extracted_facts_make_a_turn_findable_end_to_end(client):
         for i, (role, text) in enumerate(_TURNS)
     )
     assert _ids(client.search("2023-05-13"))[0] == stored[0].id
+
+
+def test_people_prompt_names_everyone_and_keeps_messages_whole():
+    long_reply = "x" * 500
+    turns = [("Ana", "I adopted a beagle yesterday."), ("Ben", long_reply)]
+    prompt = build_extraction_prompt(turns, datetime(2023, 5, 20, tzinfo=UTC), people=["Ana", "Ben"])
+    assert "between Ana and Ben" in prompt
+    assert "Saturday 2023-05-20" in prompt
+    assert "[0] Ana: I adopted a beagle yesterday." in prompt
+    assert long_reply in prompt
+    assert "The user" not in prompt
+    three = build_extraction_prompt(turns, "2023-05-20", people=["Ana", "Ben", "Cy"])
+    assert "between Ana, Ben and Cy" in three
+
+
+def test_extract_facts_between_people_reads_every_speaker():
+    seen = []
+
+    def llm(prompt):
+        seen.append(prompt)
+        return '{"0": ["Ana adopted a beagle on 2023-05-19."], "1": ["Ben likes dogs."]}'
+
+    turns = [("Ana", "I adopted a beagle yesterday."), ("Ben", "I love dogs.")]
+    facts = extract_facts(turns, "2023-05-20", llm, people=["Ana", "Ben"])
+    assert facts == {0: ["Ana adopted a beagle on 2023-05-19."], 1: ["Ben likes dogs."]}
+    assert len(seen) == 1
+    assert extract_facts([("Ana", "  ")], "2023-05-20", llm, people=["Ana"]) == {}

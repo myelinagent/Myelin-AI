@@ -69,7 +69,16 @@ Each conversation is ingested once, one memory per utterance, and its
 questions are asked against that store; the adversarial category is
 skipped. Omit `--answerer` for retrieval metrics only. The judge prompt is
 the one published LoCoMo scores use, with `gpt-4o-mini`. The options
-shared with the LongMemEval runner mean the same here. Results:
+shared with the LongMemEval runner mean the same here.
+
+To index facts extracted at write time, build the cache once and pass it:
+
+```bash
+python -m bench.locomo facts --data locomo10.json --out locomo_facts.jsonl --model gpt-4o-mini
+python -m bench.locomo run ... --facts locomo_facts.jsonl   # add --show-facts to print them too
+```
+
+Results:
 [`results/locomo.md`](results/locomo.md).
 
 The sections below apply to both runners.

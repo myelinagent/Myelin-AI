@@ -204,6 +204,11 @@ LoCoMo scores use. One run each. Reproduce with `python -m bench.locomo`.
 | Judged correct (overall) | 78.7 | 89.0 |
 | single-hop / multi-hop | 88.6 / 77.7 | 93.2 / 84.8 |
 | temporal / open-domain | 59.8 / 58.3 | 86.6 / 71.9 |
+| **+ facts extracted at write time** (`myelin.enrich`), overall | 82.4 | **91.9** |
+| + those facts also shown to the answerer, overall | 83.6 | 91.3 |
+
+Fact extraction is opt-in and costs one model call per conversation. It
+pays here and made no measurable difference on LongMemEval-S.
 
 The same caution about comparing with published scores applies; see
 [`bench/results/locomo.md`](bench/results/locomo.md).

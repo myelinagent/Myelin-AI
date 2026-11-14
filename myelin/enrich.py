@@ -64,16 +64,56 @@ Conversation:
 {conversation}"""
 
 
+_PEOPLE_PROMPT = """\
+Below is one conversation between {names}. It took place on {when}.
+
+For each numbered message that says something about any of them, write short \
+standalone facts. Cover what they did or plan to do, what they bought or own, their \
+preferences and opinions, people and places in their life, amounts, counts, durations, \
+and anything that changed.
+
+Rules:
+- Name the person each fact is about: "{first} ...".
+- Each fact must make sense on its own, without the conversation.
+- Keep names, numbers, amounts and titles exactly as stated.
+- Turn relative dates ("yesterday", "last week", "two months ago") into calendar dates, \
+using the conversation date above. Say the date in the fact.
+- Do not add anything the message does not say. Skip messages that say nothing about \
+any of them.
+
+Reply with JSON only, mapping message numbers to lists of facts, for example:
+{{"0": ["{first} adopted a greyhound on 2023-05-13."], "4": ["{first} prefers tea to coffee."]}}
+If no message says anything about them, reply {{}}.
+
+Conversation:
+{conversation}"""
+
+
 def build_extraction_prompt(
-    turns: Sequence[tuple[str, str]], when: datetime | str
+    turns: Sequence[tuple[str, str]],
+    when: datetime | str,
+    people: Sequence[str] | None = None,
 ) -> str:
-    """Prompt asking a model for facts about the user in ``turns``.
+    """Prompt asking a model for facts stated in ``turns``.
 
     ``turns`` is ``(role, text)`` pairs in order; ``when`` is the date
-    the conversation took place.
+    the conversation took place. By default the conversation is between
+    a ``user`` and an assistant and the facts are about the user. For a
+    conversation between people, pass their names as ``people`` and use
+    those names as the roles; facts are then taken from every message
+    and name the person they are about.
     """
     if isinstance(when, datetime):
         when = when.strftime("%A %Y-%m-%d")
+    if people:
+        names = list(people)
+        joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        conversation = "\n".join(
+            f"[{number}] {role}: {text}" for number, (role, text) in enumerate(turns)
+        )
+        return _PEOPLE_PROMPT.format(
+            names=joined, first=names[0], when=when, conversation=conversation
+        )
     lines = []
     for number, (role, text) in enumerate(turns):
         if role != "user" and len(text) > _OTHER_PARTY_CHARS:
@@ -124,16 +164,20 @@ def extract_facts(
     turns: Sequence[tuple[str, str]],
     when: datetime | str,
     llm: Callable[[str], str],
+    people: Sequence[str] | None = None,
 ) -> dict[int, list[str]]:
-    """Ask ``llm`` for facts about the user in one conversation.
+    """Ask ``llm`` for the facts stated in one conversation.
 
-    Returns ``{message number: [facts]}`` for the user messages that
-    yielded any. Errors from ``llm`` propagate; a reply that cannot be
-    read yields an empty result.
+    Returns ``{message number: [facts]}`` for the messages that yielded
+    any: the user's by default, everyone's when ``people`` names the
+    participants of a conversation between people (see
+    :func:`build_extraction_prompt`). Errors from ``llm`` propagate; a
+    reply that cannot be read yields an empty result.
     """
-    if not any(role == "user" and text.strip() for role, text in turns):
+    speaks = (lambda role: True) if people else (lambda role: role == "user")
+    if not any(speaks(role) and text.strip() for role, text in turns):
         return {}
-    return parse_facts(llm(build_extraction_prompt(turns, when)), len(turns))
+    return parse_facts(llm(build_extraction_prompt(turns, when, people)), len(turns))
 
 
 __all__ = ["build_extraction_prompt", "extract_facts", "parse_facts"]

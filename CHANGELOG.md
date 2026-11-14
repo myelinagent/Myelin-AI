@@ -44,6 +44,10 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Added
 
+- **`extract_facts(..., people=[...])`** extracts dated facts from a
+  conversation between named people, about every speaker. Indexed with
+  each utterance on LoCoMo it raises accuracy from 89.0% to 91.9%
+  (`gpt-5-mini`) and from 78.7% to 82.4% (`gpt-4o-mini`).
 - **LoCoMo runner** (`python -m bench.locomo`): 89.0% judged correct with
   `gpt-5-mini` answering and 78.7% with `gpt-4o-mini`, hybrid search,
   6,000-token context. See `bench/results/locomo.md`.
