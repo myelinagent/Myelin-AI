@@ -24,8 +24,12 @@ logger = logging.getLogger(__name__)
 # Cite-aware health (Innovation A)
 # ---------------------------------------------------------------------
 
-# Default magnitudes pinned by Phase 3 §3.1.
-_DEFAULT_W_USE_LIFT: float = 0.5
+# Default magnitudes pinned by Phase 3 §3.1, except the use lift, raised
+# from 0.5 to 0.7 after bench/results/lifetime.md: with cite feedback,
+# decay then hides fewer memories that a later question needs (7.1% of
+# questions to 6.5%) at the same ranking. 0.7 is close to the most the
+# EC-A5 invariant below allows (0.7 * log1p(100) = 3.23 < 3.5).
+_DEFAULT_W_USE_LIFT: float = 0.7
 _DEFAULT_W_USE_PENALTY: float = -0.3
 _DEFAULT_W_RECENCY_LIFT: float = 0.4
 _DEFAULT_RECENCY_HALFLIFE_DAYS: float = 14.0
