@@ -128,3 +128,26 @@ def test_cite_feedback_benchmark_runs_offline(tmp_path, capsys, monkeypatch):
     scores = cite_feedback.run_split([SAMPLE], seed=0)
     assert set(scores) == set(cite_feedback.ARMS)
     assert all(0.0 <= v <= 1.0 for by_k in scores.values() for v in by_k.values())
+
+
+def test_cite_feedback_model_arm_uses_what_the_model_names(tmp_path, monkeypatch):
+    from bench import cite_feedback
+
+    monkeypatch.setenv("MYELIN_CITE_LEARNING", "1")
+    prompts = []
+
+    class FakeClient:
+        def complete(self, prompt, max_tokens=0):
+            prompts.append(prompt)
+            return type("Completion", (), {"text": "It was a beagle.\nUsed: 1"})()
+
+    scores = cite_feedback.run_split([SAMPLE], seed=0, model=FakeClient())
+    assert cite_feedback.MODEL_ARM in scores
+    assert prompts and "[1] " in prompts[0] and "Used:" in prompts[0]
+    assert cite_feedback.named_by_model(FakeClient(), "q", ["a", "b"]) == {0}
+
+    class Silent:
+        def complete(self, prompt, max_tokens=0):
+            return type("Completion", (), {"text": "No idea."})()
+
+    assert cite_feedback.named_by_model(Silent(), "q", ["a"]) is None

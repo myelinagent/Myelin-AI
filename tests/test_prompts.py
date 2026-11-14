@@ -82,3 +82,34 @@ def test_recall_format_and_prompt_compose():
         assert prompt.index("Paris") < prompt.index("Berlin")
     finally:
         c.close()
+
+
+def test_numbered_context_and_the_used_line_round_trip():
+    from datetime import UTC, datetime
+
+    from myelin import build_answer_prompt, format_context, parse_used, strip_used
+    from myelin.types import Memory, SearchResult
+
+    when = datetime(2025, 3, 2, tzinfo=UTC)
+    hits = [
+        SearchResult(memory=Memory(id=str(n), content=text, user_id="u", t_valid=when), score=1.0)
+        for n, text in enumerate(["Scott moved to Berlin.", "Scott likes tea."])
+    ]
+    history = format_context(hits, numbered=True)
+    assert "[1] Scott moved to Berlin." in history and "[2] Scott likes tea." in history
+    assert "[1]" not in format_context(hits)
+
+    for style in ("reasoned", "direct"):
+        prompt = build_answer_prompt(history, "Where does Scott live?", style=style, ask_used=True)
+        assert '"Used:"' in prompt
+        assert '"Used:"' not in build_answer_prompt(history, "Where?", style=style)
+    assert not build_answer_prompt(history, "q", style="direct", ask_used=True).rstrip().endswith(
+        "Answer:"
+    )
+
+    reply = "Notes...\nAnswer: Berlin\nUsed: [1], 1, 2"
+    assert parse_used(reply) == [1, 2]
+    assert strip_used(reply) == "Notes...\nAnswer: Berlin"
+    assert parse_used("Answer: Berlin\nUsed: none") == []
+    assert parse_used("Answer: Berlin") == []
+    assert parse_used("used: 4\nAnswer: x\nUSED: 2") == [2]

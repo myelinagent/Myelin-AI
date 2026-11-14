@@ -22,6 +22,7 @@ internally and callers that need short output.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 _RULES = """\
@@ -88,6 +89,7 @@ def build_answer_prompt(
     *,
     now: datetime | str | None = None,
     style: str = "reasoned",
+    ask_used: bool = False,
 ) -> str:
     """Return a prompt asking a model to answer ``question`` from ``history``.
 
@@ -95,6 +97,11 @@ def build_answer_prompt(
     :func:`myelin.format_context`. ``now`` is the moment the question is
     asked (a datetime, or text to show as-is); it defaults to the current
     time. ``style`` is ``"reasoned"`` or ``"direct"``.
+
+    With ``ask_used`` the model is also asked to finish with a line
+    naming the numbered memories its answer relied on; pass numbered
+    history (``format_context(results, numbered=True)``), read the line
+    with :func:`parse_used` and report it with ``MemoryClient.cite_used``.
     """
     if style not in ANSWER_STYLES:
         raise ValueError(
@@ -104,12 +111,46 @@ def build_answer_prompt(
         now = datetime.now().astimezone()
     if isinstance(now, datetime):
         now = now.strftime("%Y-%m-%d (%a) %H:%M")
-    return ANSWER_STYLES[style].format(
+    prompt = ANSWER_STYLES[style].format(
         rules=_RULES,
         history=history.strip() or "(no relevant history found)",
         now=now,
         question=question.strip(),
     )
+    if not ask_used:
+        return prompt
+    if style == "direct":
+        # The prompt ends with "Answer:" for the model to continue.
+        return prompt[: -len("Answer:")].rstrip() + _USED_DIRECT
+    return prompt + _USED_REASONED
 
 
-__all__ = ["ANSWER_STYLES", "build_answer_prompt"]
+_USED_REASONED = (
+    '\n\nAfter the answer, add one more line starting with "Used:" that lists the '
+    "bracketed numbers of the history entries your answer relies on, separated by "
+    'commas, or "Used: none" if none of them helped.'
+)
+_USED_DIRECT = (
+    '\n\nGive the answer on a line starting with "Answer:". Then add a line starting '
+    'with "Used:" that lists the bracketed numbers of the history entries your answer '
+    'relies on, separated by commas, or "Used: none" if none of them helped.'
+)
+_USED_LINE = re.compile(r"(?im)^\s*used\s*:\s*(.*)$")
+
+
+def parse_used(response: str) -> list[int]:
+    """Numbers from the last ``Used:`` line of a model's reply, in the
+    order given and without repeats. Empty when there is no such line or
+    it says none."""
+    lines = _USED_LINE.findall(response or "")
+    if not lines:
+        return []
+    return list(dict.fromkeys(int(n) for n in re.findall(r"\d+", lines[-1])))
+
+
+def strip_used(response: str) -> str:
+    """``response`` without its ``Used:`` lines."""
+    return _USED_LINE.sub("", response or "").rstrip()
+
+
+__all__ = ["ANSWER_STYLES", "build_answer_prompt", "parse_used", "strip_used"]

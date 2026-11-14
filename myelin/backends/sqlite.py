@@ -321,6 +321,11 @@ class SqliteBackend:
                         f"ALTER TABLE tombstones ADD COLUMN {col_sql}"
                     )
 
+            if "shown_unused_count" not in self._column_names("memories"):
+                cursor.execute(
+                    "ALTER TABLE memories ADD COLUMN "
+                    "shown_unused_count INTEGER NOT NULL DEFAULT 0"
+                )
             if "index_text" not in self._column_names("memories"):
                 cursor.execute(
                     "ALTER TABLE memories ADD COLUMN index_text TEXT NOT NULL DEFAULT ''"
@@ -965,6 +970,25 @@ class SqliteBackend:
 
     # ---- v1.2 cite-event surface --------------------------------
 
+    def record_unused(self, memory_ids: Sequence[str]) -> int:
+        """Count one "shown but not used" for each live memory in
+        ``memory_ids``; returns how many were updated. Health is not
+        affected: only ranking reads this counter."""
+        ids = list(dict.fromkeys(memory_ids))
+        updated = 0
+        with self._lock:
+            cur = self._conn.cursor()
+            for chunk in _chunks(ids):
+                cur.execute(
+                    "UPDATE memories SET shown_unused_count = shown_unused_count + 1 "
+                    f"WHERE id IN ({','.join('?' * len(chunk))}) "
+                    "AND health_state != 'tombstoned'",
+                    chunk,
+                )
+                updated += cur.rowcount
+            self._conn.commit()
+        return updated
+
     def record_cite(
         self,
         *,
@@ -1216,5 +1240,6 @@ class SqliteBackend:
             cite_correct_count=int(row.get("cite_correct_count") or 0),
             cite_incorrect_count=int(row.get("cite_incorrect_count") or 0),
             last_cited_at=_iso_to_dt(row.get("last_cited_at")),
+            shown_unused_count=int(row.get("shown_unused_count") or 0),
             index_text=row.get("index_text") or "",
         )

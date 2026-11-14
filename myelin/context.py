@@ -181,8 +181,13 @@ def _stamp(when: datetime) -> str:
     return when.strftime("%Y-%m-%d %H:%M")
 
 
-def format_context(results: Sequence[SearchResult]) -> str:
+def format_context(results: Sequence[SearchResult], *, numbered: bool = False) -> str:
     """Render results as dated text, oldest first.
+
+    With ``numbered``, each memory is prefixed with ``[n]``, its position
+    in ``results`` counted from 1, so an answering model can say which
+    ones it used (see :func:`myelin.parse_used` and
+    ``MemoryClient.cite_used``).
 
     Memories that share a timestamp and a session (``session_id`` in
     their metadata) are grouped under one date heading, in conversation
@@ -205,7 +210,10 @@ def format_context(results: Sequence[SearchResult]) -> str:
                 pair[0],
             )
         )
-        lines = "\n".join(shown_text(result) for _, result in members)
+        lines = "\n".join(
+            f"[{rank + 1}] {shown_text(result)}" if numbered else shown_text(result)
+            for rank, result in members
+        )
         blocks.append(f"### {_stamp(when)}\n{lines}")
     return "\n\n".join(blocks)
 

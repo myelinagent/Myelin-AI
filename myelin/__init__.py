@@ -17,7 +17,7 @@ See README for full API + cross-references to the validated mechanisms.
 """
 from myelin.client import MemoryClient
 from myelin.context import estimate_tokens, excerpt, fit_to_budget, format_context
-from myelin.prompts import build_answer_prompt
+from myelin.prompts import build_answer_prompt, parse_used, strip_used
 from myelin.types import (
     ApoptosisReport,
     ConsolidationReport,
@@ -44,6 +44,8 @@ __all__ = [
     "excerpt",
     "fit_to_budget",
     "format_context",
+    "parse_used",
+    "strip_used",
 ]
 
 __version__ = "1.4.0"
