@@ -50,27 +50,38 @@ write-time facts: 89.0 (`locomo.md`).
 Self-reported unless noted; answering model, judge and prompts differ,
 so none of these is a like-for-like comparison.
 
-| LongMemEval-S | Score | Answering model |
+Checked against the sources' own pages on 2026-11-14.
+
+| LongMemEval-S | Score | Answering model / judge |
 |---|---:|---|
-| Mastra Observational Memory | 94.9 | gpt-5-mini |
-| Zep | 94.7 | gpt-5.4 |
-| Mem0 | 92.5 | not stated |
-| Hindsight | 91.4 | Gemini 3 Pro |
-| **Myelin** | **90.1** (eight runs: 90.7) | gpt-5-mini |
-| Hindsight | 89.0 | open 120B model |
-| **Myelin** | **88.6** | gpt-4o |
-| Mastra | 84.2 | gpt-4o |
-| Zep, measured by others | 71.2 | gpt-4o |
-| Mem0, measured by others | 64.2 | gpt-4.1-mini |
+| Mastra Observational Memory | 94.9 | gpt-5-mini / gpt-4o |
+| Hindsight, vendor site | 94.6 | not stated |
+| Mem0 | 94.4 | not stated |
+| Mastra Observational Memory | 93.3 | gemini-3-pro-preview / gpt-4o |
+| MemMachine | 93.0 | gpt-5-mini / gpt-4o-mini |
+| Hindsight, paper | 91.4 | Gemini 3 Pro / GPT-OSS-120B |
+| Zep | 90.2 | gpt-5.4 / gpt-5.4 |
+| **Myelin** | **90.1** (eight runs: 90.7) | gpt-5-mini / gpt-4o |
+| Hindsight, paper | 89.0 | GPT-OSS-120B / GPT-OSS-120B |
+| **Myelin** | **88.6** | gpt-4o / gpt-4o |
+| Mastra Observational Memory | 84.2 | gpt-4o / gpt-4o |
+| Zep, measured by Supermemory | 71.2 | gpt-4o / gpt-4o |
+| Mem0, MemOS leaderboard as quoted by EverMemOS | 66.4 | not stated |
 
 | LoCoMo | Score |
 |---|---:|
-| Zep | 94.7 (58 to 79 when measured by others) |
-| **Myelin** | **92.6** |
-| Mem0 | 92.5 (58 to 66 when measured by others) |
-| MemMachine | 91.7 |
-| Hindsight | 85.7 |
-| Letta, filesystem | 74.0 |
+| Zep | 94.7 (gpt-5.4 reader and judge); its own 2025 figure 75.1; 58.4 to 85.2 when measured by others |
+| EverMemOS | 93.1 (gpt-4.1-mini) |
+| **Myelin** | **92.6** (gpt-5-mini) |
+| Mem0 | 92.5 (models not stated); its own 2025 paper 66.9; 61.0 to 64.2 when measured by others |
+| Hindsight | 92.0 on the vendor site (models not stated); paper 89.6 (Gemini 3 Pro), 85.7 (GPT-OSS-120B) |
+| MemMachine | 91.7 (gpt-4.1-mini); 87.5 to 88.1 (gpt-4o-mini) |
+| Letta, filesystem | 74.0 (gpt-4o-mini) |
+
+An earlier version of these tables listed Zep's and Mem0's LoCoMo scores
+(94.7 and 92.5) under LongMemEval-S, and attributed the 71.2 for Zep to
+the Hindsight paper, which quotes it from Supermemory. Other published
+scores exist that were seen only second-hand and are not listed.
 
 ### Open source or paid
 
@@ -85,7 +96,7 @@ before relying on this.
 | Mastra | Apache-2.0 framework, with some enterprise-licensed parts | Mastra Cloud and enterprise licence | the open framework's Observational Memory |
 | Hindsight | MIT, self-hostable | Vectorize cloud | the open project |
 | Letta | Apache-2.0 | Letta Cloud | the open project |
-| MemMachine | reported as Apache-2.0 (not checked here) | vendor cloud | own preprint |
+| MemMachine | Apache-2.0 | vendor cloud | own preprint |
 
 Zep is the only entry whose published scores cannot be reproduced with
 freely available code. The answering and judging models are paid APIs
