@@ -17,6 +17,11 @@ Two kinds of feedback are simulated:
 * ``per-memory`` — an upper bound: a memory is cited as useful only if
   it is evidence for that question.
 
+* ``model-named`` (with ``--model``) — what an application can do with
+  an answering model: the model is shown the numbered results, answers
+  the question and names the ones it used; those are cited as useful
+  and the rest as not.
+
 Evidence utterances are shared between questions about the same events,
 which is how feedback on one question can help another.
 """
@@ -27,31 +32,65 @@ import argparse
 import json
 import os
 import random
+import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from bench import locomo
+from bench.llm import ChatClient, LLMError
 from myelin import MemoryClient
 
 ARMS = ("off", "per-question", "per-memory")
+MODEL_ARM = "model-named"
+
+USED_PROMPT = """\
+Below are numbered messages from past conversations, then a question.
+
+{messages}
+
+Question: {question}
+
+Answer the question in one sentence. Then, on a new line, write "Used:" followed by \
+the numbers of the messages your answer relies on, separated by commas. If none of \
+them helps, write "Used: none"."""
+
+
+def named_by_model(client: ChatClient, question: str, texts: list[str]) -> set[int] | None:
+    """Positions (from 0) of the messages the model says it used, or None
+    when the call fails or the reply has no ``Used:`` line."""
+    messages = "\n".join(f"[{n}] {text}" for n, text in enumerate(texts, start=1))
+    try:
+        reply = client.complete(
+            USED_PROMPT.format(messages=messages, question=question), max_tokens=200
+        ).text
+    except LLMError:
+        return None
+    found = re.findall(r"(?im)^\s*used:\s*(.*)$", reply)
+    if not found:
+        return None
+    return {int(n) - 1 for n in re.findall(r"\d+", found[-1]) if 0 < int(n) <= len(texts)}
 KS = (5, 10, 20, 50)
 FEEDBACK_DEPTH = 20
 
 
 def run_split(
-    samples: list[dict[str, Any]], seed: int, embedder: Any = None
+    samples: list[dict[str, Any]],
+    seed: int,
+    embedder: Any = None,
+    model: ChatClient | None = None,
 ) -> dict[str, dict[int, float]]:
     """Share of held-out questions with all evidence in the top k, per arm."""
-    hits: dict[str, dict[int, list[bool]]] = {arm: defaultdict(list) for arm in ARMS}
+    arms = (*ARMS, MODEL_ARM) if model is not None else ARMS
+    hits: dict[str, dict[int, list[bool]]] = {arm: defaultdict(list) for arm in arms}
     for sample in samples:
         turns = locomo.conversation_turns(sample)
         known = {t.dia_id for t in turns}
         asked = [q for q in locomo.questions(sample) if set(q.get("evidence", [])) & known]
         random.Random(seed).shuffle(asked)
         feedback, held_out = asked[: len(asked) // 2], asked[len(asked) // 2 :]
-        for arm in ARMS:
+        for arm in arms:
             client = MemoryClient(user_id="bench", embedder=embedder, cite_ranking=arm != "off")
             try:
                 stored = client.add_many(
@@ -63,11 +102,21 @@ def run_split(
                         shown = client.search(qa["question"], top_k=FEEDBACK_DEPTH)
                         evidence = set(qa["evidence"]) & known
                         answered = evidence <= {dia[h.memory.id] for h in shown}
-                        for hit in shown:
-                            useful = (
-                                answered if arm == "per-question"
-                                else dia[hit.memory.id] in evidence
+                        named: set[int] | None = None
+                        if arm == MODEL_ARM:
+                            assert model is not None
+                            named = named_by_model(
+                                model, qa["question"], [h.memory.content for h in shown]
                             )
+                            if named is None:
+                                continue
+                        for position, hit in enumerate(shown):
+                            if named is not None:
+                                useful = position in named
+                            elif arm == "per-question":
+                                useful = answered
+                            else:
+                                useful = dia[hit.memory.id] in evidence
                             client.cite(hit.memory.id, answer_correct=useful, query=qa["question"])
                 for qa in held_out:
                     evidence = set(qa["evidence"]) & known
@@ -85,6 +134,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--embedder", default="", help="static model id; omit for lexical only")
     parser.add_argument("--seeds", type=int, default=5, help="random splits to average over")
     parser.add_argument("--limit", type=int, default=0, help="only the first N conversations")
+    parser.add_argument(
+        "--model", default="",
+        help="model id; adds an arm where the model names the messages it used",
+    )
     args = parser.parse_args(argv)
     # Cite learning is off unless switched on; this benchmark is about it.
     os.environ["MYELIN_CITE_LEARNING"] = "1"
@@ -96,10 +149,11 @@ def main(argv: list[str] | None = None) -> int:
         from myelin.embedders import StaticEmbedder
 
         embedder = StaticEmbedder(args.embedder)
-    runs = [run_split(samples, seed, embedder) for seed in range(args.seeds)]
+    model = ChatClient(args.model) if args.model else None
+    runs = [run_split(samples, seed, embedder, model) for seed in range(args.seeds)]
     print("| Feedback | " + " | ".join(f"All evidence in top {k}" for k in KS) + " |")
     print("|---|" + "---:|" * len(KS))
-    for arm in ARMS:
+    for arm in (*ARMS, MODEL_ARM) if model is not None else ARMS:
         cells = []
         for k in KS:
             values = [100 * run[arm][k] for run in runs]
