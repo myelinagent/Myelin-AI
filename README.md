@@ -459,7 +459,15 @@ a query, those cited mostly in correct answers move up and those cited in
 incorrect ones move down. Uncited memories keep their position, feedback
 never pulls in a memory the query did not match, and one cite has little
 effect (full strength at five). Pass `MemoryClient(cite_ranking=False)` to
-use cites for forgetting only. This has not been measured on a benchmark.
+use cites for forgetting only.
+
+Measured on held-out LoCoMo questions with no model
+([`bench/results/fusion.md`](bench/results/fusion.md)): when a cite says
+which memory was useful, all of a question's evidence is in the top 5 for
+47.6% of questions against 42.1% without feedback (hybrid search). When
+every memory shown for a question gets the same verdict, there is no
+gain. Cite the memories an answer actually used, not everything that was
+retrieved.
 
 ---
 

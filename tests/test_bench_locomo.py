@@ -113,3 +113,18 @@ def test_facts_are_extracted_once_then_indexed_and_shown(tmp_path, monkeypatch):
     assert len(within_budget(turns, 12)) < len(within_budget(turns, 1000))
     monkeypatch.setattr(locomo._lme, "SHOW_FACTS", False)
     locomo.FACTS.clear()
+
+
+def test_cite_feedback_benchmark_runs_offline(tmp_path, capsys, monkeypatch):
+    from bench import cite_feedback
+
+    monkeypatch.delenv("MYELIN_CITE_LEARNING", raising=False)
+    data = tmp_path / "locomo.json"
+    data.write_text(json.dumps([SAMPLE]))
+    assert cite_feedback.main(["--data", str(data), "--seeds", "2"]) == 0
+    out = capsys.readouterr().out
+    for arm in cite_feedback.ARMS:
+        assert f"| {arm} |" in out
+    scores = cite_feedback.run_split([SAMPLE], seed=0)
+    assert set(scores) == set(cite_feedback.ARMS)
+    assert all(0.0 <= v <= 1.0 for by_k in scores.values() for v in by_k.values())
