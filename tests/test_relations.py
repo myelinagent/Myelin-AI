@@ -47,7 +47,7 @@ def test_support_reaches_similar_memories():
 
 
 def test_health_grades_use_related_use_and_unused_showings_together():
-    old = dict(age_days=200)
+    old = {"age_days": 200}
     alone = health.memory_health(_memory("a", **old), now=NOW)
     related = health.memory_health(_memory("a", **old), now=NOW, related_support=2.0)
     used = health.memory_health(_memory("a", used=3, **old), now=NOW)
