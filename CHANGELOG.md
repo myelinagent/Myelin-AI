@@ -70,7 +70,10 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
   the content and never returned as content. `myelin.enrich.extract_facts`
   asks a model you supply for short, standalone, dated facts about the user
   in one conversation, to use as that index text. Opt-in: the default write
-  path still makes no model calls.
+  path still makes no model calls. On LongMemEval-S, on top of hybrid
+  search, indexing extracted facts did not measurably change accuracy
+  (89.8% against 89.2%, within noise), and showing them to the answerer
+  lowered it (88.0%); see `bench/results/longmemeval_s_stage2.md`.
 - **`cite()` feedback now influences ranking.** With cite learning enabled,
   long-term search re-ranks a pool of the most relevant candidates: memories
   whose cites were mostly correct move up, mostly incorrect move down, and
