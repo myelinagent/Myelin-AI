@@ -52,16 +52,22 @@ def _stems(text: str) -> set[str]:
     return {w[:6] for w in _WORD.findall(text.lower()) if w not in _COMMON_WORDS}
 
 
+_SLACK = 1.5
+
+
 def excerpt(text: str, query: str, max_tokens: int) -> str:
     """Shorten ``text`` to about ``max_tokens``, keeping what ``query`` is about.
 
-    Text already within the limit is returned unchanged. Otherwise the
+    Text within the limit, or up to half as long again, is returned
+    unchanged. Otherwise the
     text is split into passages (lines and sentences); passages sharing
     the most words with the query are kept, in their original order, and
     each gap is marked with an ellipsis. When no passage shares a word
     with the query the opening of the text is kept.
     """
-    if estimate_tokens(text) <= max_tokens:
+    # A text only a little over the limit is kept whole: shortening it
+    # saves little and risks cutting the answer.
+    if estimate_tokens(text) <= max_tokens * _SLACK:
         return text
     limit = max_tokens * _CHARS_PER_TOKEN
     passages = [p for p in _PASSAGE_BREAK.split(text) if p.strip()]
@@ -80,14 +86,21 @@ def excerpt(text: str, query: str, max_tokens: int) -> str:
             continue
         chosen.add(i)
         used += size
-    # Spend what is left on the passages around the matches, for context.
-    for i in sorted(chosen):
-        for neighbour in (i + 1, i - 1):
-            if 0 <= neighbour < len(passages) and neighbour not in chosen:
-                size = len(passages[neighbour])
-                if used + size <= limit:
-                    chosen.add(neighbour)
-                    used += size
+    # Spend what is left on the passages around the matches, working
+    # outwards until the limit is reached: the answer is often next to
+    # the words that matched (the items of a list, the reply to a
+    # question), not in the matching passage itself.
+    grew = True
+    while grew:
+        grew = False
+        for i in sorted(chosen):
+            for neighbour in (i + 1, i - 1):
+                if 0 <= neighbour < len(passages) and neighbour not in chosen:
+                    size = len(passages[neighbour])
+                    if used + size <= limit:
+                        chosen.add(neighbour)
+                        used += size
+                        grew = True
 
     parts: list[str] = []
     previous = -1
