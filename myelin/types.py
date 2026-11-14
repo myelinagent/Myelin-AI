@@ -93,6 +93,10 @@ class Memory:
     cite_correct_count: int = 0
     cite_incorrect_count: int = 0
     last_cited_at: datetime | None = None
+    # Extra text this memory is findable by (search keys, extracted
+    # facts). Indexed for search alongside ``content``; never shown as
+    # the memory's content.
+    index_text: str = ""
 
 
 @dataclass

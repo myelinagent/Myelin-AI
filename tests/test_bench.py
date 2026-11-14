@@ -315,3 +315,63 @@ def test_prompt_choice_is_recorded_and_pinned(dataset, tmp_path, llm):
     assert row["hypothesis"] == row["response"] == "Comet"
     # The same directory cannot be continued with another prompt.
     assert lme.main([*base, "--prompt", "v1"]) == 2
+
+
+def test_extracted_facts_are_indexed_and_optionally_shown(dataset, tmp_path, llm, monkeypatch):
+    from bench import extract_facts as ef
+
+    entries = json.loads(dataset.read_text())
+    cache = tmp_path / "facts.jsonl"
+    # Tag the first session's first turn with a fact that shares no word with it.
+    key = ef.session_key(entries[0]["haystack_dates"][0], entries[0]["haystack_sessions"][0])
+    cache.write_text(json.dumps({"key": key, "facts": {"0": ["The user owns a sighthound."]}}) + "\n")
+    assert ef.load_cache(cache) == {key: {0: ["The user owns a sighthound."]}}
+
+    monkeypatch.setattr(lme, "FACTS", {})
+    data = tmp_path / "one.json"
+    entries[0]["question"] = "Do I own a sighthound?"
+    data.write_text(json.dumps(entries[:1]))
+
+    plain = tmp_path / "plain"
+    assert lme.main(["run", "--system", "myelin", "--data", str(data), "--out", str(plain)]) == 0
+    with_facts = tmp_path / "facts"
+    assert lme.main(["run", "--system", "myelin", "--data", str(data), "--out", str(with_facts),
+                     "--facts", str(cache), "--show-facts", "--answerer", "fake"]) == 0
+    rows = {
+        name: json.loads((path / "answers.jsonl").read_text().splitlines()[0])
+        for name, path in (("plain", plain), ("facts", with_facts))
+    }
+    assert rows["plain"]["context_turns"] == 0          # nothing matched "sighthound"
+    assert rows["facts"]["recall"]["any@5"] == 1.0      # found through the fact
+    manifest = json.loads((with_facts / "manifest.json").read_text())
+    assert manifest["facts"] == "facts.jsonl" and manifest["show_facts"] is True
+    turns = lme.history_turns(entries[0])
+    assert turns[0].facts == ("The user owns a sighthound.",)
+    monkeypatch.setattr(lme, "SHOW_FACTS", True)
+    assert "(noted: The user owns a sighthound.)" in lme.render_history(turns[:1])
+
+
+def test_fact_extraction_script_is_resumable(dataset, tmp_path, monkeypatch):
+    from bench import extract_facts as ef
+
+    calls: list[str] = []
+
+    class FakeClient:
+        def __init__(self, model):
+            pass
+
+        def complete(self, prompt, *, max_tokens):
+            from bench.llm import Completion
+
+            calls.append(prompt)
+            return Completion('{"0": ["The user said something."]}', 10, 5, 0.0)
+
+    monkeypatch.setattr(ef, "ChatClient", FakeClient)
+    out = tmp_path / "facts.jsonl"
+    argv = ["--data", str(dataset), "--out", str(out), "--model", "fake", "--workers", "2"]
+    assert ef.main(argv) == 0
+    # Three questions share the same three sessions: three calls, not nine.
+    assert len(calls) == 3
+    assert len(ef.load_cache(out)) == 3
+    assert ef.main(argv) == 0
+    assert len(calls) == 3

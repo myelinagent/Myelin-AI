@@ -147,6 +147,45 @@ hidden reasoning. All 500 questions, one run each, 2026-11-14.
   temporal (90.2 against 95.5) questions.
 - No answer was empty; one of 500 reached the 4,000-token cap.
 
+## Write-time fact extraction: no measured gain
+
+`myelin.enrich.extract_facts` was run with `gpt-4o-mini` over all 23,867
+dated sessions (about $4.80), producing short dated facts about the user
+per message. The facts were indexed beside each turn (`index_text`), on top
+of the hybrid setup above. `gpt-5-mini` answering, `gpt-4o` judging, all 500
+questions, one run each, 2026-11-14.
+
+| | Hybrid | + facts indexed | + facts indexed and shown | Oracle |
+|---|---:|---:|---:|---:|
+| **Accuracy (overall)** | 89.2 | 89.8 | 88.0 | 93.4 |
+| Accuracy (task-averaged) | 90.2 | 92.7 | 89.6 | 94.0 |
+| single-session-user | 97.1 | 95.7 | 95.7 | 95.7 |
+| single-session-assistant | 96.4 | 98.2 | 98.2 | 100.0 |
+| single-session-preference | 83.3 | 100.0 | 83.3 | 90.0 |
+| multi-session | 78.2 | 75.9 | 76.7 | 86.5 |
+| temporal-reasoning | 90.2 | 91.7 | 87.2 | 95.5 |
+| knowledge-update | 96.2 | 94.9 | 96.2 | 96.2 |
+| abstention subset | 90.0 | 80.0 | 83.3 | 86.7 |
+| All evidence turns in context | 92.3 | 93.0 | 93.0 | — |
+
+- **Indexing the facts: +0.6 overall, which is noise.** Against the run
+  without facts it fixed 16 answers and broke 13. Retrieval coverage rose
+  only from 92.3 to 93.0.
+- **Showing the facts to the answerer: -1.2.** It fixed 12 and broke 18,
+  with temporal questions down from 90.2 to 87.2. Extracted dates that are
+  slightly off appear to mislead more than they help.
+- **Preference questions went from 83.3 to 100.0 with facts indexed**, the
+  one clear movement, on 30 questions.
+- **These runs also show the noise floor.** Two configurations that differ
+  little still disagree on about 30 of 500 answers. Effects under about two
+  points cannot be resolved with single runs.
+
+Conclusion: the mechanism works and is cheap, but on this benchmark, on top
+of hybrid search, it does not improve accuracy. It stays in the library as
+an opt-in tool and is not part of the recommended setup. The published gain
+for fact-augmented keys (about +5 points) was measured against a weaker
+retriever than the hybrid one used here.
+
 ## Next
 
 1. ~~Batch embedding at ingest~~ Done: `add_many` embeds a batch in one

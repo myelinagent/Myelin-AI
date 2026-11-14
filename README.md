@@ -455,8 +455,9 @@ Endpoints: `/tools/memory_{search,get,store,update,forget,consolidate,prune}`,
 # Core CRUD
 client.add(content, *, user_id=None, metadata=None, event=None,
            confidence=0.5, importance=0.5, outcome=None,
-           t_valid=None) -> Memory                                        # outcome= 1.4
+           t_valid=None, index_text=None) -> Memory                       # outcome= 1.4
 client.add_many(items, *, user_id=None) -> list[Memory]   # text or dicts of add() arguments
+client.set_index_text(memory_id, index_text) -> bool      # extra text to be found by
 client.search(query, *, user_id=None, top_k=10, as_of=None,
               session_id=None, modes=("working","session","long_term")) -> list[SearchResult]
 client.recall(query, *, token_budget=6000, max_results=100,

@@ -64,6 +64,16 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
   of questions with every evidence turn in the answerer's context rose from
   85.3% to 92.3%, and accuracy with `gpt-4o` answering from 82.8% to 87.4%
   (`bench/results/longmemeval_s_stage2.md`).
+- **Index text and write-time fact extraction.** `add(index_text=...)` (also
+  an `add_many` item key, and `set_index_text()` for existing memories)
+  stores extra text a memory is findable by. It is indexed and embedded with
+  the content and never returned as content. `myelin.enrich.extract_facts`
+  asks a model you supply for short, standalone, dated facts about the user
+  in one conversation, to use as that index text. Opt-in: the default write
+  path still makes no model calls. On LongMemEval-S, on top of hybrid
+  search, indexing extracted facts did not measurably change accuracy
+  (89.8% against 89.2%, within noise), and showing them to the answerer
+  lowered it (88.0%); see `bench/results/longmemeval_s_stage2.md`.
 - **`cite()` feedback now influences ranking.** With cite learning enabled,
   long-term search re-ranks a pool of the most relevant candidates: memories
   whose cites were mostly correct move up, mostly incorrect move down, and

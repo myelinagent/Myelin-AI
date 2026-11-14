@@ -306,7 +306,7 @@ class MemoryClient:
             return 0
         done = 0
         for memory in self._backend.memories_without_vectors(user_id):
-            vector = self._embed(memory.content)
+            vector = self._embed(_search_text(memory.content, memory.index_text))
             if vector is not None and self._backend.set_vector(memory.id, vector):
                 done += 1
         return done
@@ -377,6 +377,7 @@ class MemoryClient:
         importance: float = 0.5,
         outcome: Mapping[str, object] | None = None,
         t_valid: datetime | None = None,
+        index_text: str | None = None,
     ) -> Memory:
         """Add a fact to the substrate.
 
@@ -401,6 +402,11 @@ class MemoryClient:
         client's clock (the current time); pass it when ingesting
         history so `search(as_of=...)` and age-based health see the
         fact at its real date. Naive values are read as UTC.
+
+        `index_text` is extra text the fact should be findable by, such
+        as facts or keywords extracted from it (see `myelin.enrich`). It
+        is indexed and embedded together with `content` but is never
+        returned as the fact's content.
         """
         ev: Event | None
         if event is None:
@@ -467,8 +473,10 @@ class MemoryClient:
             merged_metadata["_salience"] = gate_meta
 
         extra: dict[str, Any] = {}
+        if index_text:
+            extra["index_text"] = index_text
         if self._vectors_enabled():
-            vector = self._embed(content)
+            vector = self._embed(_search_text(content, index_text))
             if vector is not None:
                 extra["vector"] = vector
         return self._backend.add_memory(
@@ -516,12 +524,14 @@ class MemoryClient:
 
         vectors: list[list[float] | None] = [None] * len(records)
         if self._vectors_enabled():
-            vectors = self._embed_many([r["content"] for r in records])
+            vectors = self._embed_many(
+                [_search_text(r["content"], r.get("index_text")) for r in records]
+            )
         rows: list[dict[str, Any]] = []
         for record, vector in zip(records, vectors, strict=True):
             unknown = set(record) - {
                 "content", "user_id", "metadata", "event", "t_valid",
-                "confidence", "importance", "outcome",
+                "confidence", "importance", "outcome", "index_text",
             }
             if unknown:
                 raise TypeError(f"unexpected keys in item: {sorted(unknown)}")
@@ -544,6 +554,8 @@ class MemoryClient:
             }
             if vector is not None:
                 row["vector"] = vector
+            if record.get("index_text"):
+                row["index_text"] = record["index_text"]
             rows.append(row)
         stored = write_batch(rows)
         self._n_add_calls += len(rows)
@@ -1182,10 +1194,26 @@ class MemoryClient:
             memory_id, content=content, metadata=metadata
         )
         if content is not None and self._vectors_enabled():
-            vector = self._embed(content)
+            vector = self._embed(_search_text(updated.content, updated.index_text))
             if vector is not None:
                 self._backend.set_vector(memory_id, vector)
         return updated
+
+    def set_index_text(self, memory_id: str, index_text: str) -> bool:
+        """Replace the extra text a memory is findable by (see `add`).
+
+        Use it to enrich a memory after it was written, for example
+        with facts extracted later. The memory's content is unchanged.
+        Returns False for an unknown or tombstoned id.
+        """
+        memory = self._backend.get(memory_id)
+        if memory is None or not self._backend.set_index_text(memory_id, index_text):
+            return False
+        if self._vectors_enabled():
+            vector = self._embed(_search_text(memory.content, index_text))
+            if vector is not None:
+                self._backend.set_vector(memory_id, vector)
+        return True
 
     def delete(self, memory_id: str) -> bool:
         """Hard-delete a memory. Returns True if deleted, False if absent.
@@ -1551,6 +1579,11 @@ class MemoryClient:
         ]
         revisions.sort(key=lambda m: m.t_valid)
         return revisions
+
+
+def _search_text(content: str, index_text: str | None) -> str:
+    """What gets embedded for a memory: content plus extra index text."""
+    return f"{content}\n{index_text}" if index_text else content
 
 
 def _make_dropped_memory(user_id: str, content: str, gate_meta: dict) -> Memory:
