@@ -1,0 +1,485 @@
+% DRAFT. Every number comes from bench/results/*.md in this repository;
+% see paper/README.md for the mapping. Authors, affiliation and the
+% benchmark's name are placeholders.
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{natbib}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\setlist{nosep}
+
+\title{Memory That Ages: A Longitudinal Benchmark for Agent Memory,\\
+and What It Shows That Static Benchmarks Cannot}
+\author{AUTHOR NAMES\\AFFILIATION\\\texttt{contact@example.org}}
+\date{DRAFT --- November 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Memory systems for language agents are compared on question-answering
+benchmarks that load a fixed history and ask each question once. A
+memory that lives with an agent for months does three things those
+benchmarks cannot observe: it forgets, it learns from use which
+memories matter, and it is asked about the same facts again. We
+describe a small open-source memory system, Myelin, and a longitudinal
+evaluation protocol that replays long conversations on a simulated
+clock, asks each question some sessions after its evidence and
+optionally again later, and scores retrieval without any language
+model. On two standard benchmarks Myelin scores 90.1\% (LongMemEval-S,
+\texttt{gpt-5-mini}, mean of four runs) and 92.6\% (LoCoMo), in the
+range that published systems report; several mechanisms we added moved
+those scores by less than their run-to-run spread. Under the
+longitudinal protocol the same mechanisms separate clearly. Feedback
+about which retrieved memories an answer used raises the share of
+questions with all evidence in the top five results from 46.3\% to
+52.7\%, and from 44.1\% to 53.7\% when questions are revisited.
+Age-based forgetting alone hides a memory that a later question needs
+for 8.6\% of questions (14.1\% of revisits); graded together with use
+and with the use of related memories, that falls to 2.5\% (2.0\%).
+We also report what did not work, the size of the noise in
+model-judged scores, and the limits of our evidence. Code, data
+loaders and every result file are public.
+\end{abstract}
+
+\section{Introduction}
+
+An agent that works with a person for months needs a memory that
+changes. New facts replace old ones. Most of what was said is never
+needed again, and a little of it is needed repeatedly. Stores grow
+until retrieving from them is slow or noisy unless something is
+removed. Designs for agent memory have long reflected this: recency and
+importance weighting in generative agents \citep{park2023generative},
+an Ebbinghaus-style forgetting curve in MemoryBank
+\citep{zhong2024memorybank,ebbinghaus1885}, tiered stores in MemGPT
+\citep{packer2023memgpt}, temporal knowledge graphs
+\citep{rasmussen2025zep} and linked notes \citep{xu2025amem}.
+
+The benchmarks used to compare these systems do not change in the same
+way. LongMemEval \citep{wu2025longmemeval} and LoCoMo
+\citep{maharana2024locomo} each load a complete history into an empty
+store and then ask a set of questions, each once. This is a good test
+of whether the right text can be found and read. It says nothing about
+a mechanism whose effect appears only as time passes or as questions
+recur, because no time passes between writing and asking and no
+question recurs.
+
+We ran into this directly. While improving a memory system against
+those two benchmarks we added forgetting that stops at quarantine,
+feedback on which memories an answer used, and a health grade that
+combines age, use and relationships between memories. None of these
+could move a LongMemEval or LoCoMo score, by construction, and the
+changes that could move it did so by amounts close to the difference
+between two runs of an identical configuration. We therefore built a
+protocol in which time passes, and report here what it shows.
+
+Our contributions are:
+\begin{itemize}
+\item A longitudinal evaluation protocol for agent memory
+  (Section~\ref{sec:protocol}): replay on a simulated clock, lagged and
+  revisited questions, and three model-free measures (evidence in the
+  top $k$, needed-but-hidden, and store still searchable).
+\item A description of Myelin (Section~\ref{sec:system}), an MIT-licensed
+  memory library on SQLite, with the measurements that led to each
+  design choice, including the ones that were rejected.
+\item Results under the protocol (Section~\ref{sec:results}) that
+  separate mechanisms which static benchmarks cannot tell apart, and an
+  account of how noisy model-judged scores are
+  (Section~\ref{sec:static}).
+\end{itemize}
+
+\section{Related work}
+
+\paragraph{Benchmarks.} LongMemEval \citep{wu2025longmemeval} asks 500
+questions, each over its own history of roughly 115{,}000 tokens in the
+S setting, with question types for single-session recall, multi-session
+aggregation, temporal reasoning, knowledge updates and abstention.
+LoCoMo \citep{maharana2024locomo} has ten conversations of 19 to 32
+sessions spanning months, with about 150 questions each. Both are
+static in the sense above. An independent audit of LoCoMo reports that
+6.4\% of its answer key is wrong and that its commonly used judge
+prompt accepts many wrong answers \citep{penfield2026locomo}.
+
+\paragraph{Systems.} Published scores on these benchmarks are largely
+self-reported, with different answering models, judges and prompts
+\citep{chhikara2025mem0,rasmussen2025zep,hindsight2025,mastra2026om}.
+We give them for orientation in Section~\ref{sec:static} and do not
+treat them as a ranking.
+
+\paragraph{Forgetting and activation.} Base-level activation in ACT-R
+\citep{anderson2004actr} makes a memory's availability a function of
+how often and how recently it was used, and spreading activation passes
+some of it to associated memories. Our health grade
+(Section~\ref{sec:health}) is in this tradition, in a much simpler
+form, with one addition that matters for agents: a contradiction must
+outweigh any amount of use.
+
+\section{The system}
+\label{sec:system}
+
+Myelin stores one memory per message or fact in a single SQLite file.
+A memory has text, a time from which it is valid, an optional time
+from which it is not, metadata, and counters for how it has been used.
+
+\paragraph{Retrieval.} Search combines BM25 \citep{robertson2009bm25}
+over a stemmed full-text index with, optionally, cosine similarity over
+embeddings from a small static model that runs on a CPU. The two
+rankings are merged by reciprocal-rank fusion \citep{cormack2009rrf}.
+A single fusion did not serve both the top of the list and its depth:
+weighting the vector ranking double found the most evidence within a
+6{,}000-token context on LongMemEval-S but was worse than lexical
+search alone in the top ten on LoCoMo's short messages (39.6\% of
+questions with all evidence in the top ten, against 54.9\%). Myelin
+orders the first 20 results by an equal-weight fusion with a small rank
+constant and the rest by the vector-heavy one, which matched the better
+of the two at every depth measured (51.8\% in the top ten on LoCoMo,
+77.5\% unchanged on LongMemEval-S, evidence within the budget
+unchanged).
+
+\paragraph{Context.} \texttt{recall} returns as many of the best
+results as fit a token budget. A memory longer than a limit is shown
+as an excerpt of the passages that share words with the query. On
+LongMemEval-S, shortening the limit from 300 to 100 tokens raised the
+share of questions with every evidence turn in a 6{,}000-token context
+from 92.3\% to 97.0\%, because evidence is mostly in short user
+messages and long assistant replies were using the budget.
+
+\paragraph{Facts at write time.} Optionally, one model call per
+conversation extracts short dated facts (``Ana adopted a dog on
+2023-05-19'') that are indexed alongside the messages they came from;
+the messages are still what is stored and shown. This raised LoCoMo
+accuracy by about three points and made no measurable difference on
+LongMemEval-S.
+
+\paragraph{Feedback.} After an answer, \texttt{cite\_used} records
+which of the shown memories it relied on. Those are counted as useful.
+The others are counted as shown but not used, which lowers their rank
+the next time they are relevant and leaves their health alone. The
+answering model can supply the list: the context is numbered and the
+prompt asks for a final line naming the entries used.
+
+\subsection{One health grade}
+\label{sec:health}
+
+Forgetting is decided from a single number per memory,
+$h = \sigma(r)$, with
+\begin{align*}
+r ={}& b - a(\text{age})
+       - w_c\,(\text{contradictions})
+       - w_q\,(1-\text{confidence})
+       - w_i\,(1-\text{importance}) \\
+     &+ \min\bigl(L,\;
+        w_u \ln(1+u) + w_g \ln(1+s) + w_t\,\rho\bigr)
+       - w_x \ln(1+x),
+\end{align*}
+where $a(\cdot)$ grows once a memory is more than thirty days old, $u$
+is the number of times the memory was cited as used, $\rho$ decays with
+the time since it was last used, $x$ counts cites in answers that were
+wrong, and $s$ is support from related memories. Support flows from
+each used memory to its neighbours: messages within three positions in
+the same conversation, weighted by $1/(1+\text{distance})$, and its
+eight nearest memories by embedding with cosine similarity at least
+0.5, weighted by that similarity; in both cases scaled by
+$\ln(1+u)$ of the source. A store with no cites has no support
+anywhere, so the grade there depends on age, confidence and
+importance alone.
+
+The cap $L$ is set just below $w_c$. However much a memory, or its
+neighbours, has been used, one contradiction outweighs it. This is
+enforced at import time and by a test.
+
+\paragraph{Forgetting is not deletion.} \texttt{prune} first marks
+values that a later fact supersedes as no longer current, then
+quarantines memories whose grade is below a threshold. Quarantined
+memories leave search and stay in the store; they return if their
+grade recovers, and are deleted only on explicit request.
+
+\section{A longitudinal protocol}
+\label{sec:protocol}
+
+The protocol needs a dataset in which (i) content is dated over a long
+period and (ii) each question is annotated with the items that answer
+it. LoCoMo has both: sessions carry dates over 166 to 293 days, and
+questions list their evidence utterances. We use its 1{,}531
+non-adversarial questions that have evidence.
+
+\paragraph{Replay.} For each conversation, a store is created with a
+simulated clock. Sessions are written in order, each on its date.
+
+\paragraph{Lagged questions.} Each question is scheduled a random
+number of sessions (0 to $\ell$, default $\ell=6$) after the last
+session containing its evidence, so that memories have aged by the
+time they are needed. A question is asked by searching the store as it
+then stands.
+
+\paragraph{Revisits.} Optionally each question is asked again $n$ more
+times, each a further 1 to $\ell$ sessions later. This models a user
+returning to the same facts, which is the situation in which earlier
+use of a memory can matter.
+
+\paragraph{Arms.} The same schedule is run four ways: \emph{static}
+(write and search only); \emph{decay} (\texttt{prune} after every
+session); \emph{feedback} (after each question, \texttt{cite\_used}
+with the question's evidence as the used set); and both.
+
+\paragraph{Measures.} No language model is involved.
+\begin{itemize}
+\item \emph{Evidence in the top $k$}: the share of askings for which
+  every evidence item is among the first $k$ results.
+\item \emph{Needed but hidden}: the share of askings for which
+  forgetting had already removed an evidence item from search.
+\item \emph{Store still searchable}: the share of everything written
+  that remains in search at the end.
+\end{itemize}
+The second and third are the two sides of forgetting. A system can
+drive either to its best value trivially, by forgetting nothing or
+everything; the protocol reports both, with ranking, so the exchange
+is visible.
+
+\paragraph{Feedback quality.} Using the evidence annotation as the
+used set is an upper bound. In a separate held-out test on the same
+data, letting \texttt{gpt-4o-mini} name the memories it used matched
+that bound (47.8\% against 47.7\% of questions with all evidence in
+the top five, against 42.4\% with no feedback). Feedback that gives
+every shown memory one verdict for the whole answer gave no gain, and
+neither did marking only the useful ones: the gain comes from moving
+down memories that keep being retrieved and not used.
+
+\section{What static benchmarks showed}
+\label{sec:static}
+
+Table~\ref{tab:static} gives accuracy on the two static benchmarks.
+All Myelin runs use a 6{,}000-token context. LongMemEval-S is judged
+by \texttt{gpt-4o} with the benchmark's prompts; LoCoMo by
+\texttt{gpt-4o-mini} with the prompt that published scores use.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{llr}
+\toprule
+Benchmark & Configuration & Accuracy \\
+\midrule
+LongMemEval-S & Release 1.4.0, \texttt{gpt-4o-mini} & 60.4 \\
+ & Final, \texttt{gpt-4o} (one run) & 88.6 \\
+ & Final, \texttt{gpt-5-mini} (four runs: 90.2, 91.0, 89.4, 89.8) & 90.1 \\
+ & Evidence sessions given directly, \texttt{gpt-5-mini} & 93.4 \\
+LoCoMo & Final, facts indexed, \texttt{gpt-5-mini} (one run) & 92.6 \\
+ & Final, no facts, \texttt{gpt-5-mini} (one run) & 89.0 \\
+\bottomrule
+\end{tabular}
+\caption{Myelin on static benchmarks (\%). ``Evidence sessions given
+directly'' is a control that bypasses retrieval.}
+\label{tab:static}
+\end{table}
+
+For orientation, published LongMemEval-S scores include 94.9 with
+\texttt{gpt-5-mini} and 84.2 with \texttt{gpt-4o}
+\citep{mastra2026om}, and 91.4 with a larger model
+\citep{hindsight2025}; on LoCoMo, figures between 74.0 and 94.7 are
+reported by the systems' authors, and an audit puts the ceiling of a
+perfect system near 93.6 \citep{penfield2026locomo}. These use
+different answering models, judges and prompts, and where third
+parties have re-run a system the scores have differed widely. We make
+no claim of rank.
+
+Three observations from producing Table~\ref{tab:static} motivate the
+rest of the paper.
+
+\paragraph{The remaining gap is not in the memory.} With all evidence
+in context for 96.4\% of LongMemEval-S questions, accuracy is 90.1\%;
+with the evidence handed over directly it is 93.4\%. Most of what is
+left is reading, concentrated in multi-session questions that require
+counting items across sessions (about 80\% against 86.5\% in the
+control). Five attempts to close it through retrieval (extra queries
+written by a model, larger budgets, a model-based filter, write-time
+facts and a stricter counting rule) did not.
+
+\paragraph{The noise is as large as the effects.} Four runs of one
+configuration ranged from 89.6\% to 93.0\%. Between two runs of an
+identical setting about 40 of 500 answers change. One question type
+with 30 questions moved between 76.7\% and 93.3\%. A change that moves
+the score by a point cannot be told from no change without several
+runs per setting, which few reports include. On LoCoMo, two runs of
+one setting differed by about 50 answers each way out of 1{,}540.
+
+\paragraph{Mechanisms over time are invisible.} Quarantine, feedback
+and the health grade leave these scores untouched, since each question
+meets a freshly written store. A change to ranking at the top of the
+list that improved LoCoMo's top-ten evidence by twelve points left
+accuracy within noise, because a 6{,}000-token context held the same
+evidence either way.
+
+\section{Results under the longitudinal protocol}
+\label{sec:results}
+
+All figures are means over three random question schedules on all ten
+conversations, with hybrid search. The spread between schedules is
+below half a point for ranking columns unless noted.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+ & \multicolumn{3}{c}{All evidence in} & Needed & Store still \\
+ & top 5 & top 10 & top 20 & but hidden & searchable \\
+\midrule
+\multicolumn{6}{l}{\emph{Asked up to 6 sessions after the evidence}} \\
+Static & 46.3 & 55.8 & 63.9 & 0.0 & 100.0 \\
+Decay & 48.9 & 57.6 & 63.9 & 8.6 & 66.2 \\
+Feedback & 52.7 & 60.6 & 64.0 & 0.0 & 100.0 \\
+Decay + feedback & 52.8 & 60.8 & 64.9 & 2.5 & 86.2 \\
+\midrule
+\multicolumn{6}{l}{\emph{Asked up to 12 sessions after the evidence}} \\
+Static & 44.8 & 54.7 & 62.8 & 0.0 & 100.0 \\
+Decay & 46.9 & 55.5 & 61.4 & 11.8 & 66.2 \\
+Feedback & 51.1 & 58.9 & 62.8 & 0.0 & 100.0 \\
+Decay + feedback & 51.0 & 58.8 & 63.5 & 4.0 & 85.0 \\
+\bottomrule
+\end{tabular}
+\caption{Longitudinal protocol, each question asked once (\%).}
+\label{tab:once}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{All evidence in} & Needed & Store still \\
+ & top 5 & top 10 & but hidden & searchable \\
+\midrule
+Static & 44.1 & 54.0 & 0.0 & 100.0 \\
+Decay & 45.9 & 54.0 & 14.1 & 66.2 \\
+Feedback & 53.7 & 59.5 & 0.0 & 100.0 \\
+Decay + feedback & 53.8 & 59.6 & 2.0 & 89.6 \\
+\bottomrule
+\end{tabular}
+\caption{Longitudinal protocol with two revisits: figures for repeat
+askings only (\%).}
+\label{tab:revisit}
+\end{table}
+
+\paragraph{Feedback.} Telling the store which memories were used is
+the largest effect: 6.4 points of top-five evidence when each question
+is asked once (Table~\ref{tab:once}) and 9.6 points on repeat askings
+(Table~\ref{tab:revisit}). It carries over because questions about
+the same events share evidence, and more so when the same question
+returns.
+
+\paragraph{Forgetting by age alone.} Decay removes a third of the
+store from search and slightly sharpens the top of the list, since old
+unused messages stop competing. It also hides a memory that a later
+question needs for 8.6\% of questions, 11.8\% at the longer lag and
+14.1\% of repeat askings. A sweep over decay speed and threshold
+(36 settings on five conversations, checked on the other five) found
+no setting that escaped this: without use signals the grade is a
+function of age, the oldest memories go first whether or not they
+matter, and roughly one asking in four hundred lost a needed memory
+for each 1\% of the store hidden. Those two parameters are a dial, not
+something to optimize.
+
+\paragraph{Graded together.} With feedback, use keeps a memory
+healthy, and support keeps its neighbours healthy. Needed-but-hidden
+falls from 8.6\% to 2.5\% (11.8\% to 4.0\%; 14.1\% to 2.0\% on
+revisits), with ranking equal to feedback alone or slightly better
+and 10 to 15\% of the store still pruned.
+
+\paragraph{What was tried and not kept.} A mild penalty on health for
+being shown and not used pruned more (27\% of the store) and ranked a
+point better in the top 20 at the shorter lag, and hid more needed
+memories (6.2\% and 9.9\%); a stronger one collapsed the store. We
+left health unaffected by unused showings. Counting related support in
+ranking, as well as in health, made no difference at any weight: being
+related to useful memories was a reason to keep a memory, not a reason
+to rank it higher for a particular question. Adding the conversational
+neighbours of top results to the context did not reliably help.
+
+\section{Why a longitudinal benchmark is needed}
+
+The argument does not depend on our system. Any memory that forgets,
+consolidates, re-ranks from feedback or updates beliefs has behaviour
+that is a function of history. A benchmark that writes once and asks
+once evaluates that memory at a single point where none of the
+behaviour has happened. Three consequences follow.
+
+First, static scores cannot separate designs that differ only in how
+they age. In Table~\ref{tab:once} the four arms differ by more than six
+points in the top five; on LongMemEval and LoCoMo they are the same
+system and receive the same score.
+
+Second, static scores cannot show harm. Forgetting has a cost, and it
+is the cost a deployed agent's user would notice: something they said
+is gone when they ask for it. Needed-but-hidden measures that directly,
+and it was large (8.6 to 14.1\%) for the simplest and most common
+design, decay by age.
+
+Third, static scores reward what is cheap to buy elsewhere. Our
+accuracy on LongMemEval-S rose by about thirty points, of which the
+largest steps came from the answering prompt and the answering model.
+Those are real improvements to a product. They say little about
+memory, and near the top of the range the differences between systems
+are within the noise of the judge and the reader.
+
+As agents are given longer-lived memory, the failures that matter
+shift from ``could not find it'' to ``forgot it'', ``kept the wrong
+version'' and ``keeps surfacing the same irrelevant thing''. Those are
+properties of a trajectory. A benchmark should have one.
+
+\section{Limitations}
+
+\begin{itemize}
+\item \textbf{One dataset.} The longitudinal results use LoCoMo only.
+  Its conversations are social chat between two people; other domains
+  may behave differently. Revisits repeat the same wording, which is
+  easier than a paraphrase.
+\item \textbf{Oracle feedback.} The feedback arms use evidence labels.
+  A model's own account matched them in one separate test with one
+  model; we have not run the full protocol with a model in the loop.
+\item \textbf{Retrieval only.} The protocol scores whether evidence is
+  retrievable, not whether answers are right. Our static results
+  suggest answer accuracy is too noisy at this scale to resolve the
+  effects, which is why we chose model-free measures, and it means the
+  link to answer quality is argued and not measured.
+\item \textbf{Small effects, few runs.} Several comparisons are within
+  a point; schedules were repeated three times and model-judged runs
+  between one and four times. We report spreads where we have them.
+\item \textbf{Tuning.} The health weights were chosen on five
+  conversations and checked on the other five of the same benchmark.
+  That guards against fitting noise, not against fitting the dataset.
+\item \textbf{Comparisons.} We did not run other systems. Published
+  figures are quoted as their authors report them.
+\item \textbf{Scale.} Stores here hold hundreds of memories. Separate
+  timing on synthetic text shows retrieval latency growing linearly to
+  about 45\,ms (lexical) and 83\,ms (hybrid) at 200{,}000 memories; the
+  quality of forgetting at that scale is untested.
+\end{itemize}
+
+\section{Conclusion}
+
+Benchmarks that ask each question once of a freshly written store
+measure finding and reading. They are close to saturated by simple
+retrieval and a strong reader, and noisy at the top. What distinguishes
+memory systems that are meant to last (forgetting, promotion by use,
+relationships between memories) appears only when time passes and
+questions return. A protocol that replays dated conversations, lags and
+repeats questions, and reports ranking together with what forgetting
+cost, is cheap to run, needs no model, and separated mechanisms that
+static benchmarks scored identically. We offer it, with a small system
+built against it, as a starting point.
+
+\paragraph{Availability.} The library, the harnesses for LongMemEval,
+LoCoMo, cite feedback, scale and the longitudinal protocol, and every
+result file cited here are in the project repository under the MIT
+licence. LoCoMo and LongMemEval are distributed by their authors under
+their own licences.
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+
+\end{document}
