@@ -10,6 +10,11 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Changed
 
+- **Faster full-text search on large stores.** The best matches are now
+  picked inside the index before memory rows are read: at 200,000
+  memories, median `recall()` went from 119 ms to 45 ms and the 95th
+  percentile from 600 ms to 190 ms. Results are unchanged apart from the
+  order of exact ties. `python -m bench.scale` reproduces the measurement.
 - **Forgetting stops at quarantine.** `prune()` no longer tombstones on its
   own. Each call now:
   1. marks a fact as superseded when a later fact gives a different value
