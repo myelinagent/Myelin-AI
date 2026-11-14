@@ -166,3 +166,65 @@ def test_recall_uses_the_same_ranking(client):
         client.cite(runner_up, answer_correct=True)
         client.cite(leader, answer_correct=False)
     assert _names(client.recall("red bus work"))[:2] == [runner_up, leader]
+
+
+# ---- cite_used: which shown memories the answer relied on -----------------
+
+
+def test_unused_counts_against_rank_like_a_wrong_answer():
+    assert utility(0, 0, 4) == utility(0, 4)
+    assert utility(3, 0, 3) == utility(3, 3)
+    assert utility(0, 0, 0) == 0.0
+
+
+def test_cite_used_cites_the_used_and_counts_the_rest_as_unused(client):
+    a = client.add("Scott's favourite tea is oolong")
+    b = client.add("Scott drank tea at the airport")
+    c = client.add("Scott bought a tea strainer")
+    shown = client.search("tea", top_k=3)
+    position = {r.memory.id: n for n, r in enumerate(shown, start=1)}
+
+    done = client.cite_used(shown, [position[a.id]], query="favourite tea?")
+    assert done == {"used": 1, "unused": 2}
+    after = {m.id: m for m in (client.get(a.id), client.get(b.id), client.get(c.id))}
+    assert (after[a.id].cite_correct_count, after[a.id].shown_unused_count) == (1, 0)
+    for other in (b.id, c.id):
+        assert after[other].shown_unused_count == 1
+        # Not needed for one question is not a wrong answer: health counters stay put.
+        assert after[other].cite_incorrect_count == 0
+        assert after[other].cite_correct_count == 0
+
+
+def test_cite_used_accepts_memory_ids_and_ignores_bad_positions(client):
+    a = client.add("alpha tea")
+    b = client.add("beta tea")
+    shown = client.search("tea", top_k=2)
+    assert client.cite_used(shown, [a.id, 99, 0]) == {"used": 1, "unused": 1}
+    assert client.get(b.id).shown_unused_count == 1
+    assert client.cite_used([], [1]) == {"used": 0, "unused": 0}
+
+
+def test_repeatedly_unused_memories_drop_below_used_ones(client):
+    # Two memories about equally relevant to the query, the filler first.
+    filler = client.add("Scott takes the red bus to work every day")
+    useful = client.add("Scott takes the red bus to work most days")
+    for _ in range(5):
+        shown = client.search("red bus work", top_k=2)
+        used = [n for n, r in enumerate(shown, start=1) if r.memory.id == useful.id]
+        client.cite_used(shown, used)
+    ranked = [r.memory.id for r in client.search("red bus work", top_k=2)]
+    assert ranked == [useful.id, filler.id]
+    # Unused is not forgetting: the filler is still healthy and still found.
+    assert client.get(filler.id).health_state == "healthy"
+    assert client.prune().quarantined_count == 0
+
+
+def test_cite_used_does_nothing_when_cite_learning_is_off(monkeypatch):
+    monkeypatch.delenv("MYELIN_CITE_LEARNING", raising=False)
+    plain = MemoryClient(user_id="u")
+    try:
+        m = plain.add("tea")
+        assert plain.cite_used(plain.search("tea"), [1]) == {"used": 0, "unused": 0}
+        assert plain.get(m.id).shown_unused_count == 0
+    finally:
+        plain.close()

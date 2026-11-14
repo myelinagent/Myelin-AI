@@ -1523,6 +1523,52 @@ class MemoryClient:
         if session_id is not None and self._working_memory_enabled:
             self._maybe_attend_from_cite(memory_id, session_id)
 
+    def cite_used(
+        self,
+        results: Iterable[SearchResult],
+        used: Iterable[int | str],
+        *,
+        session_id: str | None = None,
+        query: str | None = None,
+    ) -> dict[str, int]:
+        """Record which of the memories shown for a question the answer
+        actually used.
+
+        ``results`` is what was shown (the output of :meth:`search` or
+        :meth:`recall`). ``used`` names the ones the answer relied on, as
+        positions in ``results`` counted from 1 (the numbers shown by
+        ``format_context(results, numbered=True)`` and returned by
+        :func:`myelin.parse_used`) or as memory ids.
+
+        Used memories are cited as useful, exactly as
+        ``cite(id, answer_correct=True)``. The others are counted as
+        "shown but not used": they rank lower the next time they are
+        relevant, and their health is left alone, so being unneeded for
+        one question never leads to a memory being forgotten.
+
+        Returns ``{"used": n, "unused": m}``. No-op (zeros) when cite
+        learning is off.
+        """
+        shown = list(results)
+        if not self._cite_learning_enabled or not shown:
+            return {"used": 0, "unused": 0}
+        wanted_ids: set[str] = set()
+        for item in used:
+            if isinstance(item, bool):
+                continue
+            if isinstance(item, int):
+                if 1 <= item <= len(shown):
+                    wanted_ids.add(shown[item - 1].memory.id)
+            else:
+                wanted_ids.add(str(item))
+        used_ids = [r.memory.id for r in shown if r.memory.id in wanted_ids]
+        unused_ids = [r.memory.id for r in shown if r.memory.id not in wanted_ids]
+        for memory_id in dict.fromkeys(used_ids):
+            self.cite(memory_id, answer_correct=True, session_id=session_id, query=query)
+        record_unused = getattr(self._backend, "record_unused", None)
+        unused = record_unused(unused_ids) if callable(record_unused) and unused_ids else 0
+        return {"used": len(set(used_ids)), "unused": int(unused)}
+
     def abstain_event(
         self,
         query: str | None,

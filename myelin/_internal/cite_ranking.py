@@ -45,7 +45,7 @@ def pool_size(top_k: int) -> int:
     return max(top_k * POOL_FACTOR, top_k + POOL_MIN_EXTRA)
 
 
-def utility(correct: int, incorrect: int) -> float:
+def utility(correct: int, incorrect: int, unused: int = 0) -> float:
     """Feedback record as a number in (-1, 1): positive for memories that
     mostly led to right answers, negative for wrong, 0 with no record.
 
@@ -53,7 +53,10 @@ def utility(correct: int, incorrect: int) -> float:
     wrong answer) and scaled by how much evidence there is.
     """
     correct = max(0, correct)
-    incorrect = max(0, incorrect)
+    # Shown for a question and not used counts against a memory's rank
+    # the same way a wrong answer does: it took a place something
+    # useful could have had.
+    incorrect = max(0, incorrect) + max(0, unused)
     total = correct + incorrect
     if total == 0:
         return 0.0
@@ -73,7 +76,11 @@ def rerank_by_cites(
     """
     pool = list(results)
     utilities = [
-        utility(r.memory.cite_correct_count, r.memory.cite_incorrect_count)
+        utility(
+            r.memory.cite_correct_count,
+            r.memory.cite_incorrect_count,
+            r.memory.shown_unused_count,
+        )
         for r in pool
     ]
     if not any(utilities):

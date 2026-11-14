@@ -14,13 +14,13 @@ Two kinds of feedback are simulated:
   memory shown for a question gets the same verdict, correct when the
   question's evidence was all in view (a stand-in for "the answer was
   right").
-* ``per-memory`` — an upper bound: a memory is cited as useful only if
-  it is evidence for that question.
+* ``per-memory`` — an upper bound: ``cite_used`` with exactly the
+  question's evidence as the used memories.
 
 * ``model-named`` (with ``--model``) — what an application can do with
   an answering model: the model is shown the numbered results, answers
-  the question and names the ones it used; those are cited as useful
-  and the rest as not.
+  the question and names the ones it used, which are passed to
+  ``cite_used``.
 
 Evidence utterances are shared between questions about the same events,
 which is how feedback on one question can help another.
@@ -110,14 +110,20 @@ def run_split(
                             )
                             if named is None:
                                 continue
-                        for position, hit in enumerate(shown):
-                            if named is not None:
-                                useful = position in named
-                            elif arm == "per-question":
-                                useful = answered
-                            else:
-                                useful = dia[hit.memory.id] in evidence
-                            client.cite(hit.memory.id, answer_correct=useful, query=qa["question"])
+                        if arm == "per-question":
+                            for hit in shown:
+                                client.cite(
+                                    hit.memory.id, answer_correct=answered, query=qa["question"]
+                                )
+                            continue
+                        if named is None:
+                            named = {
+                                position for position, hit in enumerate(shown)
+                                if dia[hit.memory.id] in evidence
+                            }
+                        client.cite_used(
+                            shown, [position + 1 for position in named], query=qa["question"]
+                        )
                 for qa in held_out:
                     evidence = set(qa["evidence"]) & known
                     ranked = [dia[h.memory.id] for h in client.search(qa["question"], top_k=max(KS))]
