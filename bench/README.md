@@ -92,4 +92,6 @@ dataset needs a new `--out`.
 - State whether `cite()` learning was on. It is off in this harness: feeding
   the scorer's verdict back before scoring would leak the answer key.
 
-Recorded results are in `bench/results/`.
+Recorded results are in `bench/results/`. On LongMemEval-S a 6,000-token
+budget scored higher with `gpt-4o` than 4,000 or 8,000; see
+`longmemeval_s_stage2.md`.

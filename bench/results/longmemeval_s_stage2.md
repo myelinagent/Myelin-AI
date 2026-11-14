@@ -68,6 +68,48 @@ vector-only against 100.0 fused 1:1. `BAAI/bge-small-en-v1.5` through
 ONNX took over seven minutes to embed one question's history on this
 4-core machine and was not evaluated further.
 
+## Context budget: 6,000 tokens is the sweet spot for `gpt-4o`
+
+Evidence coverage rises steadily with the budget (hybrid search, 470
+questions with evidence, no model involved):
+
+| Budget (tokens) | Turns shown | All evidence turns in context |
+|---:|---:|---:|
+| 4,000 | 29 | 87.7 |
+| 6,000 | 45 | 92.3 |
+| 8,000 | 62 | 95.7 |
+| 10,000 | 79 | 96.8 |
+| 12,000 | 95 | 97.9 |
+
+Accuracy does not follow it. `gpt-4o` on a random sample of 250 questions
+(seed 20261114), compared question by question on the 222 that have a
+judged answer at all three budgets:
+
+| | 4,000 | 6,000 | 8,000 |
+|---|---:|---:|---:|
+| **Accuracy (overall)** | 84.7 | **88.7** | 86.0 |
+| multi-session (71) | 71.8 | 78.9 | 74.6 |
+| temporal-reasoning (61) | 85.2 | 91.8 | 88.5 |
+| knowledge-update (38) | 92.1 | 92.1 | 92.1 |
+| single-session-user (22) | 100.0 | 100.0 | 95.5 |
+| single-session-assistant (24) | 95.8 | 95.8 | 95.8 |
+| abstention subset (12) | 7 right | 7 right | 9 right |
+| Prompt tokens per question | 3,906 | 5,681 | 7,444 |
+
+Against 6,000, the 4,000-token context fixed 7 answers and broke 16; the
+8,000-token context (on its 240 judged questions) fixed 5 and broke 14.
+Too little context misses evidence; too much distracts the answerer even
+though the evidence is there. The default `token_budget=6000` stays.
+
+Caveats: one sample, one run per budget; 28 of the 750 calls failed
+when the API account ran low on credit, which is why 222 questions and
+not 250 are compared. The differences are suggestive, not conclusive.
+
+What it implies: the remaining 6-point gap to perfect retrieval is about
+precision, not coverage. The next gains should come from ranking evidence
+higher inside the same budget (a reranker, facts extracted at write time)
+and not from showing more.
+
 ## Next
 
 1. ~~Batch embedding at ingest~~ Done: `add_many` embeds a batch in one
