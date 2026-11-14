@@ -10,6 +10,11 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Changed
 
+- **Excerpts use their whole budget.** A memory up to 1.5 times
+  `max_result_tokens` is returned whole, and an excerpt grows outward
+  from the passages that match the query until the limit is reached (a
+  114-token reply used to be cut to 17 tokens). LongMemEval-S with
+  `gpt-5-mini`: 91.3% over four runs (89.6 to 93.0), against 90.3%.
 - **`recall()` shortens long memories to 100 tokens instead of 300**
   (`max_result_tokens`; the three best results are still whole). Nearly
   twice as many memories fit the same budget: on LongMemEval-S the share

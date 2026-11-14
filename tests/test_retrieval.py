@@ -355,3 +355,22 @@ def test_search_still_finds_matches_ranked_below_many_hidden_ones(client):
     hits = client.search("green tea", top_k=5)
     assert [h.memory.id for h in hits] == [kept.id]
     assert len(client.search("green tea", top_k=5, include_quarantined=True)) == 5
+
+
+def test_excerpt_keeps_a_text_only_a_little_over_the_limit_whole():
+    text = " ".join(f"word{i}" for i in range(110))  # about 1.3x a 150-token limit
+    assert estimate_tokens(text) > 150
+    assert excerpt(text, "word3", 150) == text
+    assert excerpt(text, "word3", 60) != text
+
+
+def test_excerpt_fills_its_budget_around_the_match():
+    """The answer is often beside the words that matched, not in them."""
+    lines = ["Here are the jobs for seniors:"] + [
+        f"{n}. Job number {n} is described here in a few words." for n in range(1, 40)
+    ]
+    text = "\n".join(lines)
+    short = excerpt(text, "jobs for seniors", 100)
+    assert "1. Job number 1" in short and "5. Job number 5" in short
+    assert estimate_tokens(short) <= 110
+    assert estimate_tokens(short) >= 70  # the budget is used, not just the matching line
