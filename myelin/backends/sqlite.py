@@ -579,6 +579,20 @@ class SqliteBackend:
             cur.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
             self._vector_cache.pop(row[0], None)
 
+    def vectors_for(self, user_id: str) -> dict[str, Any]:
+        """Stored embedding of each of ``user_id``'s memories, by id.
+        Empty when none are stored."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT memory_id, vector FROM memory_vectors WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        if not rows:
+            return {}
+        # Only vectors of the most common size can be compared.
+        size = max({len(r[1]) for r in rows}, key=[len(r[1]) for r in rows].count)
+        return {r[0]: array("f", r[1]) for r in rows if len(r[1]) == size}
+
     def _vector_ranking(
         self, user_id: str, query_vector: Sequence[float], limit: int
     ) -> list[str]:

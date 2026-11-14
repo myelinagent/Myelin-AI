@@ -52,6 +52,15 @@ W_LOW_CONF: float = -2.5
 W_LOW_IMPORTANCE: float = -1.0
 BIAS: float = 2.0
 
+# Graded together with a memory's own use: support from related memories
+# that were used (see myelin._internal.relations), and how often it was
+# shown for a question without being used.
+W_RELATED: float = 0.0
+W_UNUSED: float = 0.0
+# Use, related use and recency together may not outweigh one
+# contradiction (the EC-A5 rule in constants.py covers use alone).
+MAX_USE_LIFT: float = 3.4
+
 QUARANTINE_THRESHOLD: float = 0.4
 CASPASE_THRESHOLD: float = 0.2
 
@@ -101,8 +110,14 @@ def memory_health(
     *,
     now: datetime | None = None,
     contradiction_count: int = 0,
+    related_support: float = 0.0,
 ) -> float:
     """Return health in [0, 1]. Higher = healthier.
+
+    ``related_support`` is what
+    :func:`myelin._internal.relations.neighbour_support` gives for this
+    memory: how much its neighbours (same conversation, similar meaning)
+    have been used.
 
     Health is driven by:
     - age in days (older = less healthy; sharply penalized past 30 days)
@@ -138,10 +153,15 @@ def memory_health(
         + W_CONTRADICTION * contradiction_count
         + W_LOW_CONF * (1.0 - conf)
         + W_LOW_IMPORTANCE * (1.0 - imp) * 0.3
-        # ---- v1.2 cite-aware terms ----
-        + W_USE_LIFT * log1p(max(0, memory.cite_correct_count))
+        # ---- use, graded together: own use, related use, recency ----
+        + min(
+            MAX_USE_LIFT,
+            W_USE_LIFT * log1p(max(0, memory.cite_correct_count))
+            + W_RELATED * log1p(max(0.0, related_support))
+            + W_RECENCY_LIFT * recency_factor(memory.last_cited_at, now),
+        )
         + W_USE_PENALTY * log1p(max(0, memory.cite_incorrect_count))
-        + W_RECENCY_LIFT * recency_factor(memory.last_cited_at, now)
+        + W_UNUSED * log1p(max(0, memory.shown_unused_count))
     )
     return _sigmoid(raw)
 

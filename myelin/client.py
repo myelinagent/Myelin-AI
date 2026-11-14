@@ -42,6 +42,7 @@ from myelin._internal.health import (
     find_superseded,
     memory_health,
 )
+from myelin._internal.relations import neighbour_support
 from myelin._internal.salience import (
     HeuristicSalienceGate,
     score_turn_heuristic,
@@ -1389,12 +1390,17 @@ class MemoryClient:
                 memories = self._backend.list_memories(user_id=target_user)
 
         contradiction_counts = compute_contradiction_counts(memories)
+        vectors_for = getattr(self._backend, "vectors_for", None)
+        support = neighbour_support(
+            memories, vectors_for(target_user) if callable(vectors_for) else None
+        )
 
         def health_of(mem: Memory) -> float:
             return memory_health(
                 mem,
                 now=now,
                 contradiction_count=contradiction_counts.get(mem.id, 0),
+                related_support=support.get(mem.id, 0.0),
             )
 
         caspase_cutoff = now - timedelta(days=caspase_window_days)
