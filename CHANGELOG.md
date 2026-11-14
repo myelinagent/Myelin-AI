@@ -67,6 +67,12 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Added
 
+- **`python -m bench.lifetime`**: a memory-over-time benchmark. Each
+  LoCoMo conversation is replayed on a simulated clock with forgetting
+  and cite feedback off and on. With both, all evidence is in the top 5
+  for 53.5% of questions against 46.4%, with a third of the store out of
+  search; decay had hidden a needed memory for 7.1% of questions. See
+  `bench/results/lifetime.md`.
 - **Sidecar endpoints** `/tools/memory_recall` (budgeted matches plus the
   text for a prompt), `/tools/memory_store_many` and
   `/tools/memory_cite_used`.

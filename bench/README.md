@@ -151,3 +151,14 @@ python -m bench.cite_feedback --data locomo10.json --embedder minishlab/potion-r
 Half of each LoCoMo conversation's questions give cite feedback, the other
 half are scored with cite-informed ranking off and on. No model. Results,
 with the hybrid fusion measurements: [`results/fusion.md`](results/fusion.md).
+
+## Memory over time
+
+```bash
+python -m bench.lifetime --data locomo10.json --embedder minishlab/potion-retrieval-32M
+```
+
+Replays each LoCoMo conversation on a simulated clock, asking every question
+some sessions after its evidence, with forgetting (`prune()` after each
+session) and cite feedback (`cite_used`) off and on. No model. Results:
+[`results/lifetime.md`](results/lifetime.md).
