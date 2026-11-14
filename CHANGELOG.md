@@ -67,6 +67,14 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Added
 
+- **`MemoryClient.cite_used(results, used)`** records which of the shown
+  memories an answer relied on. Used ones are cited as useful; the rest
+  are counted as shown but not used (`Memory.shown_unused_count`), which
+  lowers their rank and leaves their health alone. With
+  `format_context(numbered=True)`, `build_answer_prompt(ask_used=True)`
+  and `parse_used()` the answering model supplies the list. On held-out
+  LoCoMo questions all evidence is in the top 5 for 47.8% of questions
+  against 42.4% without feedback.
 - **`python -m bench.cite_feedback`**: a held-out test of cite-informed
   ranking, with no model. Feedback that names the useful memory is worth
   about 5 points of top-5 evidence with hybrid search; feedback that only

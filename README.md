@@ -467,7 +467,24 @@ which memory was useful, all of a question's evidence is in the top 5 for
 47.6% of questions against 42.1% without feedback (hybrid search). When
 every memory shown for a question gets the same verdict, there is no
 gain. Cite the memories an answer actually used, not everything that was
-retrieved.
+retrieved. `cite_used` does that, and an answering model can supply the
+list itself:
+
+```python
+hits = client.recall(question, token_budget=6000)
+prompt = build_answer_prompt(
+    format_context(hits, numbered=True), question, ask_used=True
+)
+reply = llm(prompt)                       # ... ends with "Used: 2, 5"
+client.cite_used(hits, parse_used(reply), query=question)
+answer = strip_used(reply)
+```
+
+Memories the answer used are cited as useful. The others are counted as
+shown but not used: they rank lower the next time they are relevant, and
+their health is untouched, so being unneeded for one question never leads
+to a memory being forgotten. With `gpt-4o-mini` naming what it used, the
+gain matched the upper bound (47.8% against 47.7%).
 
 ---
 
@@ -511,6 +528,7 @@ client.add(content, *, user_id=None, metadata=None, event=None,
            t_valid=None, index_text=None) -> Memory                       # outcome= 1.4
 client.add_many(items, *, user_id=None) -> list[Memory]   # text or dicts of add() arguments
 client.add_conversation(turns, *, user_id=None, when=None, llm=None, people=None) -> list[Memory]
+client.cite_used(results, used, *, session_id=None, query=None) -> dict  # which shown memories an answer used
 client.set_index_text(memory_id, index_text) -> bool      # extra text to be found by
 client.search(query, *, user_id=None, top_k=10, as_of=None,
               session_id=None, modes=("working","session","long_term")) -> list[SearchResult]

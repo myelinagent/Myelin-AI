@@ -81,3 +81,28 @@ is evidence, an upper bound on feedback quality.
 
 This is one dataset, and feedback carries over because questions about
 the same events share evidence.
+
+## `cite_used`: naming what an answer relied on
+
+Three follow-up measurements (three splits each, two-part fusion):
+
+| Feedback | top 5 | top 10 | top 20 | top 50 |
+|---|---:|---:|---:|---:|
+| none | 42.4 ± 1.0 | 51.9 ± 0.3 | 59.3 ± 0.0 | 64.8 ± 0.3 |
+| evidence cited as useful, nothing recorded for the rest | 42.9 | 51.9 | 59.3 | 65.5 |
+| `cite_used` with the evidence (upper bound) | 47.7 ± 0.4 | 55.1 ± 0.6 | 59.3 ± 0.1 | 67.6 ± 0.6 |
+| `cite_used` with what `gpt-4o-mini` says it used | 47.8 ± 0.5 | 55.2 ± 0.2 | 59.2 ± 0.2 | 68.1 ± 0.9 |
+
+- Praising the useful memories alone does nothing. The gain comes from
+  moving down the memories that keep being retrieved and not used.
+- The existing "incorrect" cite would do that too, but it also counts
+  heavily against a memory's health and so towards forgetting, which is
+  wrong for a memory that was simply not needed. `cite_used` records
+  those as shown-but-unused (`Memory.shown_unused_count`), which only
+  ranking reads.
+- A small model's own account of what it used is as good as the
+  benchmark's evidence labels here (`--model` in
+  `python -m bench.cite_feedback`: the model sees the numbered top 20,
+  answers, and ends with a `Used:` line).
+- The top 20 does not change because feedback re-orders the first 20
+  results and does not bring new ones in.
