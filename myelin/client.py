@@ -470,6 +470,90 @@ class MemoryClient:
             **extra,
         )
 
+    def add_many(
+        self,
+        items: Iterable[str | Mapping[str, Any]],
+        *,
+        user_id: str | None = None,
+    ) -> list[Memory]:
+        """Add several facts at once.
+
+        Each item is the fact's text, or a mapping with ``content`` and
+        any of the other arguments of :meth:`add` (``metadata``,
+        ``event``, ``t_valid``, ``confidence``, ``importance``,
+        ``outcome``, ``user_id``). The result has one entry per item, in
+        order, exactly as :meth:`add` would have returned it.
+
+        This is the fast path for loading history: the batch is written
+        in one transaction (all of it or none) and, with an embedder that
+        has ``encode_batch``, embedded in one call. When a salience gate
+        is on, or the backend cannot write batches, items are added one
+        at a time instead.
+        """
+        records: list[dict[str, Any]] = []
+        for item in items:
+            record = {"content": item} if isinstance(item, str) else dict(item)
+            if not isinstance(record.get("content"), str):
+                raise TypeError("each item needs a 'content' string")
+            record.setdefault("user_id", user_id)
+            records.append(record)
+
+        write_batch = getattr(self._backend, "add_memories", None)
+        if self._salience_mode != "off" or not callable(write_batch):
+            return [self.add(r.pop("content"), **r) for r in records]
+
+        vectors: list[list[float] | None] = [None] * len(records)
+        if self._vectors_enabled():
+            vectors = self._embed_many([r["content"] for r in records])
+        rows: list[dict[str, Any]] = []
+        for record, vector in zip(records, vectors, strict=True):
+            unknown = set(record) - {
+                "content", "user_id", "metadata", "event", "t_valid",
+                "confidence", "importance", "outcome",
+            }
+            if unknown:
+                raise TypeError(f"unexpected keys in item: {sorted(unknown)}")
+            event = record.get("event")
+            if isinstance(event, dict):
+                event = _event_from_dict(event)
+            elif event is not None and not isinstance(event, Event):
+                raise TypeError(
+                    f"event must be Event, dict, or None; got {type(event).__name__}"
+                )
+            t_valid = record.get("t_valid")
+            row: dict[str, Any] = {
+                "content": record["content"],
+                "user_id": record["user_id"] or self._user_id,
+                "metadata": dict(record.get("metadata") or {}),
+                "event": event,
+                "t_valid": t_valid if t_valid is not None else self._now(),
+                "confidence": record.get("confidence", 0.5),
+                "importance": record.get("importance", 0.5),
+            }
+            if vector is not None:
+                row["vector"] = vector
+            rows.append(row)
+        stored = write_batch(rows)
+        self._n_add_calls += len(rows)
+        return stored
+
+    def _embed_many(self, texts: list[str]) -> list[list[float] | None]:
+        """Embed ``texts`` in one call when the embedder supports it."""
+        encode_batch = getattr(self._embedder, "encode_batch", None)
+        if callable(encode_batch) and texts:
+            try:
+                vectors = [[float(x) for x in v] or None for v in encode_batch(texts)]
+                if len(vectors) == len(texts):
+                    return vectors
+            except Exception as exc:  # noqa: BLE001 — caller's model, anything goes
+                _warn_once(
+                    "embedder_failed",
+                    f"embedder failed ({type(exc).__name__}: {exc}); continuing "
+                    "with lexical search only. This warning fires once.",
+                )
+                return [None] * len(texts)
+        return [self._embed(text) for text in texts]
+
     @property
     def salience_telemetry(self) -> dict[str, Any]:
         """Per-instance counters for the salience gate.

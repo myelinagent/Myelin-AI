@@ -70,7 +70,8 @@ ONNX took over seven minutes to embed one question's history on this
 
 ## Next
 
-1. Batch embedding at ingest (2.4 s per 494 turns one at a time).
+1. ~~Batch embedding at ingest~~ Done: `add_many` embeds a batch in one
+   call, 2.37 s to 0.88 s per 494 turns, with identical retrieval results.
 2. Preference and temporal questions: facts and event dates extracted
    when a memory is written.
 3. Abstention.
