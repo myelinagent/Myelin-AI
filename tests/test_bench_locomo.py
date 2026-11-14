@@ -76,3 +76,40 @@ def test_retrieval_only_run_scores_evidence_and_resumes(tmp_path):
     assert (out / "answers.jsonl").read_text() == before
     assert locomo.main([*args, "--token-budget", "100"]) == 2
     assert "bm25" in locomo.render_report([summary])
+
+
+def test_facts_are_extracted_once_then_indexed_and_shown(tmp_path, monkeypatch):
+    data = tmp_path / "locomo.json"
+    data.write_text(json.dumps([SAMPLE]))
+    cache = tmp_path / "facts.jsonl"
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, model):
+            pass
+
+        def complete(self, prompt, max_tokens=0):
+            prompts.append(prompt)
+            reply = '{"0": ["Ben began ceramics lessons on 2023-05-26."]}'
+            return type("Completion", (), {"text": reply if "pottery" in prompt else "{}"})()
+
+    monkeypatch.setattr(locomo, "ChatClient", FakeClient)
+    args = ["facts", "--data", str(data), "--out", str(cache), "--model", "m", "--workers", "1"]
+    assert locomo.main(args) == 0
+    assert len(prompts) == 2 and "between Ana and Ben" in prompts[0]
+    assert locomo.main(args) == 0
+    assert len(prompts) == 2  # resumed: nothing sent again
+
+    out = tmp_path / "run"
+    run = ["run", "--system", "myelin", "--data", str(data), "--out", str(out),
+           "--facts", str(cache), "--show-facts", "--workers", "1"]
+    assert locomo.main(run) == 0
+    turns = locomo.conversation_turns(SAMPLE)
+    assert turns[2].facts == ("Ben began ceramics lessons on 2023-05-26.",)
+    assert turns[0].facts == ()
+    from bench.longmemeval import render_history, within_budget
+
+    assert "(noted: Ben began ceramics" in render_history(turns)
+    assert len(within_budget(turns, 12)) < len(within_budget(turns, 1000))
+    monkeypatch.setattr(locomo._lme, "SHOW_FACTS", False)
+    locomo.FACTS.clear()

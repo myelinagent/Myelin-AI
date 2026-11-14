@@ -29,6 +29,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import bench.longmemeval as _lme
+from bench.extract_facts import load_cache
 from bench.llm import ChatClient
 from bench.longmemeval import (
     BUDGET_DEPTH,
@@ -44,6 +46,7 @@ from bench.longmemeval import (
 )
 from bench.systems import SYSTEMS, Turn
 from myelin.context import estimate_tokens
+from myelin.enrich import build_extraction_prompt, parse_facts
 from myelin.prompts import ANSWER_STYLES, build_answer_prompt
 
 # Names as commonly used for the dataset's numeric categories.
@@ -82,6 +85,15 @@ def parse_date(text: str) -> datetime:
     return datetime.strptime(text.strip(), "%I:%M %p on %d %B, %Y").replace(tzinfo=UTC)
 
 
+# Facts per session from ``python -m bench.locomo facts``, keyed by
+# ``session_key``; filled by ``run --facts``.
+FACTS: dict[str, dict[int, list[str]]] = {}
+
+
+def session_key(sample_id: str, number: int) -> str:
+    return f"{sample_id}|session {number}"
+
+
 def conversation_turns(sample: dict[str, Any]) -> list[Turn]:
     """Every utterance of a conversation, with its session's date.
 
@@ -94,6 +106,7 @@ def conversation_turns(sample: dict[str, Any]) -> list[Turn]:
     number = 1
     while f"session_{number}" in conversation:
         when = parse_date(conversation[f"session_{number}_date_time"])
+        facts = FACTS.get(session_key(sample["sample_id"], number), {})
         for index, utterance in enumerate(conversation[f"session_{number}"]):
             text = utterance["text"]
             caption = utterance.get("blip_caption")
@@ -107,6 +120,7 @@ def conversation_turns(sample: dict[str, Any]) -> list[Turn]:
                     role=utterance["speaker"],
                     content=text,
                     dia_id=utterance["dia_id"],
+                    facts=tuple(facts.get(index, ())),
                 )
             )
         number += 1
@@ -227,6 +241,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         "max_turn_tokens": args.max_turn_tokens,
         "whole_turns": args.whole_turns,
         "embedder": args.embedder,
+        "facts": Path(args.facts).name if args.facts else "",
+        "show_facts": args.show_facts,
         "max_answer_tokens": args.max_answer_tokens,
         "answerer": args.answerer,
         "judge": args.judge,
@@ -240,7 +256,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         previous = json.loads(manifest_path.read_text())
         pinned = (
             "data_sha256", "system", "token_budget", "max_turn_tokens", "whole_turns",
-            "embedder", "answerer", "prompt_version",
+            "embedder", "facts", "show_facts", "answerer", "prompt_version",
         )
         changed = [k for k in pinned if (previous.get(k) or 0) != (manifest[k] or 0)]
         if changed:
@@ -261,6 +277,14 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         SYSTEMS["myelin"].embedder = StaticEmbedder(args.embedder)
 
+    FACTS.clear()
+    if args.facts:
+        FACTS.update(load_cache(Path(args.facts)))
+        if not FACTS:
+            print(f"--facts {args.facts}: no facts found", file=sys.stderr)
+            return 2
+    _lme.SHOW_FACTS = bool(args.show_facts)
+
     answers = JsonlLog(out / "answers.jsonl")
     answerer = ChatClient(args.answerer) if args.answerer else None
     failed = 0
@@ -275,6 +299,37 @@ def cmd_run(args: argparse.Namespace) -> int:
     summarize(out)
     if failed:
         print(f"{failed} calls failed; rerun the same command to retry them.", file=sys.stderr)
+    return 1 if failed else 0
+
+
+def cmd_facts(args: argparse.Namespace) -> int:
+    """Extract dated facts for every session, once, to a resumable cache."""
+    out = Path(args.out)
+    done = load_cache(out)
+    FACTS.clear()
+    jobs: dict[str, tuple[list[str], list[Turn]]] = {}
+    for sample in json.loads(Path(args.data).read_text()):
+        turns = conversation_turns(sample)
+        people = sorted({t.role for t in turns})
+        for turn in turns:
+            number = int(turn.session_id.split()[-1])
+            key = session_key(sample["sample_id"], number)
+            jobs.setdefault(key, (people, []))[1].append(turn)
+    todo = [key for key in jobs if key not in done]
+    print(f"{len(jobs)} sessions, {len(todo)} to extract", file=sys.stderr)
+    client = ChatClient(args.model)
+    lock = threading.Lock()
+
+    def work(key: str) -> None:
+        people, turns = jobs[key]
+        prompt = build_extraction_prompt(
+            [(t.role, t.content) for t in turns], turns[0].session_date, people
+        )
+        facts = parse_facts(client.complete(prompt, max_tokens=4000).text, len(turns))
+        with lock, out.open("a") as handle:
+            handle.write(json.dumps({"key": key, "facts": facts}) + "\n")
+
+    failed = _pool(args.workers, {key: (lambda key=key: work(key)) for key in todo}, "extracted")
     return 1 if failed else 0
 
 
@@ -384,11 +439,25 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--max-turn-tokens", type=int, default=300)
     run.add_argument("--whole-turns", type=int, default=3)
     run.add_argument("--embedder", default="")
+    run.add_argument(
+        "--facts", default="",
+        help="cache from `python -m bench.locomo facts`; facts are indexed with each utterance",
+    )
+    run.add_argument(
+        "--show-facts", action="store_true",
+        help="with --facts: also print an utterance's facts under it in the answerer's context",
+    )
     run.add_argument("--prompt", default="reasoned", choices=list(ANSWER_STYLES))
     run.add_argument("--max-answer-tokens", type=int, default=800)
     run.add_argument("--limit", type=int, default=0, help="only the first N conversations")
     run.add_argument("--workers", type=int, default=8)
     run.set_defaults(func=cmd_run)
+    facts = sub.add_parser("facts", help="extract dated facts per session to a cache")
+    facts.add_argument("--data", required=True)
+    facts.add_argument("--out", required=True, help="cache file (JSONL, resumable)")
+    facts.add_argument("--model", required=True)
+    facts.add_argument("--workers", type=int, default=16)
+    facts.set_defaults(func=cmd_facts)
     report = sub.add_parser("report", help="print a comparison table for one or more runs")
     report.add_argument("runs", nargs="+")
     report.set_defaults(
