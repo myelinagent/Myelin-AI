@@ -72,6 +72,25 @@ so none of these is a like-for-like comparison.
 | Hindsight | 85.7 |
 | Letta, filesystem | 74.0 |
 
+### Open source or paid
+
+As far as public sources say on 2026-11-14; check each project's licence
+before relying on this.
+
+| System | Code | Paid offering | What the published score was run on |
+|---|---|---|---|
+| **Myelin** | MIT, all of it; runs locally on SQLite | none | this repository |
+| Mem0 | Apache-2.0 library | hosted platform | vendor's own evaluation |
+| Zep | Graphiti engine is Apache-2.0; the self-hosted Zep Community Edition was retired in 2025 | Zep Cloud | Zep Cloud |
+| Mastra | Apache-2.0 framework, with some enterprise-licensed parts | Mastra Cloud and enterprise licence | the open framework's Observational Memory |
+| Hindsight | MIT, self-hostable | Vectorize cloud | the open project |
+| Letta | Apache-2.0 | Letta Cloud | the open project |
+| MemMachine | reported as Apache-2.0 (not checked here) | vendor cloud | own preprint |
+
+Zep is the only entry whose published scores cannot be reproduced with
+freely available code. The answering and judging models are paid APIs
+for every system, this one included.
+
 An independent audit of LoCoMo found 6.4% of the answer key wrong and
 a judge that accepts many wrong answers; a perfect system would score
 about 93.6.
