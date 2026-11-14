@@ -292,6 +292,15 @@ def test_lifetime_benchmark_replays_longmemeval_entries(tmp_path, capsys):
     args = ["--data", str(data), "--dataset", "longmemeval", "--seeds", "1",
             "--revisits", "1", "--limit", "1", "--workers", "2"]
     assert lifetime.main(args) == 0
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
     for arm in lifetime.ARMS:
-        assert f"| {arm} |" in out
+        assert f"| {arm} |" in captured.out
+    assert "1 timelines" in captured.err
+    # The history covers 92 days; a longer span is asked for, so nothing runs.
+    assert lifetime.span_days(sessions) == 92
+    short = json.loads(json.dumps(LME_ENTRY))
+    short["haystack_dates"][0] = "2023/05/21 (Sun) 09:00"
+    short["haystack_dates"][2] = "2023/05/22 (Mon) 09:00"
+    data.write_text(json.dumps([short, LME_ENTRY]))
+    assert lifetime.main([*args[:-4], "--min-span-days", "30"]) == 0
+    assert "1 timelines" in capsys.readouterr().err

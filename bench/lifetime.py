@@ -122,6 +122,11 @@ def longmemeval_timeline(
     return sessions, ids, [{"question": entry["question"], "evidence": evidence}]
 
 
+def span_days(sessions: list[list[Turn]]) -> int:
+    """Whole days from a timeline's first session to its last."""
+    return (sessions[-1][0].session_date - sessions[0][0].session_date).days
+
+
 TIMELINES = {"locomo": locomo_timeline, "longmemeval": longmemeval_timeline}
 
 
@@ -314,6 +319,11 @@ def main(argv: list[str] | None = None) -> int:
         "--limit", type=int, default=0, help="only the first N conversations (or entries)"
     )
     parser.add_argument(
+        "--min-span-days", type=int, default=0,
+        help="of those, only timelines whose sessions span at least this many days "
+             "(decay acts on age; most LongMemEval-S histories cover under two weeks)",
+    )
+    parser.add_argument(
         "--revisits", type=int, default=0,
         help="ask each question this many more times at later sessions",
     )
@@ -332,6 +342,12 @@ def main(argv: list[str] | None = None) -> int:
     samples = json.loads(Path(args.data).read_text())
     if args.limit:
         samples = samples[: args.limit]
+    if args.min_span_days:
+        samples = [
+            s for s in samples
+            if span_days(TIMELINES[args.dataset](s)[0]) >= args.min_span_days
+        ]
+    print(f"{len(samples)} timelines", file=sys.stderr)
     embedder = None
     if args.embedder:
         from myelin.embedders import StaticEmbedder
