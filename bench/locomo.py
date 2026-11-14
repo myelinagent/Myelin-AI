@@ -436,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--answerer", default="", help="model id; omit for retrieval metrics only")
     run.add_argument("--judge", default="", help="model id (published scores use gpt-4o-mini)")
     run.add_argument("--token-budget", type=int, default=6000)
-    run.add_argument("--max-turn-tokens", type=int, default=300)
+    run.add_argument("--max-turn-tokens", type=int, default=100)
     run.add_argument("--whole-turns", type=int, default=3)
     run.add_argument("--embedder", default="")
     run.add_argument(

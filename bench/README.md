@@ -30,7 +30,7 @@ Size the answerer's context by tokens instead of a fixed 10 turns:
 python -m bench.longmemeval run --system myelin --data longmemeval_s_cleaned.json --out bench/runs/myelin-6k --token-budget 6000
 ```
 
-Add `--max-turn-tokens 300` to shorten longer turns to a query-focused
+Add `--max-turn-tokens 100` (300 in results before 2026-11-14) to shorten longer turns to a query-focused
 excerpt before they are counted against the budget.
 
 `--whole-turns 3` keeps the three best-ranked turns complete. `--prompt`

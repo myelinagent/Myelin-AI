@@ -208,7 +208,8 @@ run each (one standard error is about 1.7 points). Reproduce with
 | 1.4.0 search, top 10, plain prompt | 60.4 | not run | not run |
 | BM25 + budget + excerpts, plain prompt | 64.8 | not run | not run |
 | + `build_answer_prompt` | 77.2 | 82.8 | not run |
-| + hybrid search (`StaticEmbedder`) | 78.0 | 87.4 | 89.2 |
+| + hybrid search (`StaticEmbedder`) | 78.0 | 87.4 | 89.0 (89.2, 88.8) |
+| + 100-token excerpts (the `recall()` default since) | not run | not run | 90.3 (90.2, 90.4) |
 | Perfect retrieval (control) | 79.4 | 93.6 | 93.4 |
 
 These are not comparable with scores published by other systems beyond
@@ -504,7 +505,7 @@ client.set_index_text(memory_id, index_text) -> bool      # extra text to be fou
 client.search(query, *, user_id=None, top_k=10, as_of=None,
               session_id=None, modes=("working","session","long_term")) -> list[SearchResult]
 client.recall(query, *, token_budget=6000, max_results=100,
-              max_result_tokens=300, whole_results=3, user_id=None,
+              max_result_tokens=100, whole_results=3, user_id=None,
               as_of=None, session_id=None,
               modes=("long_term",)) -> list[SearchResult]
 format_context(results) -> str        # from myelin import format_context

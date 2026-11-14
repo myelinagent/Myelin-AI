@@ -807,7 +807,7 @@ class MemoryClient:
         *,
         token_budget: int = 6000,
         max_results: int = 100,
-        max_result_tokens: int | None = 300,
+        max_result_tokens: int | None = 100,
         whole_results: int = 3,
         user_id: str | None = None,
         as_of: datetime | None = None,

@@ -10,6 +10,12 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Changed
 
+- **`recall()` shortens long memories to 100 tokens instead of 300**
+  (`max_result_tokens`; the three best results are still whole). Nearly
+  twice as many memories fit the same budget: on LongMemEval-S the share
+  of questions with all evidence in context goes from 92.3% to 97.0%, and
+  accuracy with `gpt-5-mini` from 89.0% to 90.3% (two runs each). Pass
+  `max_result_tokens=300` for the previous behaviour.
 - **Faster full-text search on large stores.** The best matches are now
   picked inside the index before memory rows are read: at 200,000
   memories, median `recall()` went from 119 ms to 45 ms and the 95th
