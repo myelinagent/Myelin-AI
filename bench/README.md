@@ -50,6 +50,30 @@ Compare runs:
 python -m bench.longmemeval report bench/runs/myelin bench/runs/bm25
 ```
 
+## LoCoMo
+
+Get the data (CC BY-NC 4.0, about 3 MB):
+
+```bash
+curl -L -o locomo10.json https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json
+```
+
+```bash
+python -m bench.locomo run --system myelin --data locomo10.json \
+    --out bench/runs/locomo --embedder minishlab/potion-retrieval-32M \
+    --answerer gpt-4o-mini --judge gpt-4o-mini
+python -m bench.locomo report bench/runs/locomo
+```
+
+Each conversation is ingested once, one memory per utterance, and its
+questions are asked against that store; the adversarial category is
+skipped. Omit `--answerer` for retrieval metrics only. The judge prompt is
+the one published LoCoMo scores use, with `gpt-4o-mini`. The options
+shared with the LongMemEval runner mean the same here. Results:
+[`results/locomo.md`](results/locomo.md).
+
+The sections below apply to both runners.
+
 ### Systems
 
 | `--system` | What it is |

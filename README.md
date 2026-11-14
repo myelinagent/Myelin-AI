@@ -193,6 +193,21 @@ These are not comparable with scores published by other systems beyond
 orientation: harnesses, prompts and answer models differ. Full tables,
 controls and caveats are in [`bench/results/`](bench/results/).
 
+### Measured on LoCoMo
+
+1,540 questions over ten long conversations, hybrid search, the same
+6,000-token budget, judged by `gpt-4o-mini` with the prompt published
+LoCoMo scores use. One run each. Reproduce with `python -m bench.locomo`.
+
+| | `gpt-4o-mini` answering | `gpt-5-mini` answering |
+|---|---:|---:|
+| Judged correct (overall) | 78.7 | 89.0 |
+| single-hop / multi-hop | 88.6 / 77.7 | 93.2 / 84.8 |
+| temporal / open-domain | 59.8 / 58.3 | 86.6 / 71.9 |
+
+The same caution about comparing with published scores applies; see
+[`bench/results/locomo.md`](bench/results/locomo.md).
+
 ---
 
 ## Memory-aware agent (`OrchestratedAgent`, v1.3)

@@ -32,6 +32,8 @@ class Turn:
     evidence: bool = False
     # Facts extracted from this turn at write time (see myelin.enrich).
     facts: tuple[str, ...] = ()
+    # The benchmark's own id for this turn, where it has one.
+    dia_id: str = ""
 
     @property
     def text(self) -> str:
