@@ -181,13 +181,13 @@ All 500 questions, judged by `gpt-4o` with the benchmark's own prompts, one
 run each (one standard error is about 1.7 points). Reproduce with
 `python -m bench.longmemeval`; see [`bench/README.md`](bench/README.md).
 
-| Setup | `gpt-4o-mini` answering | `gpt-4o` answering |
-|---|---:|---:|
-| 1.4.0 search, top 10, plain prompt | 60.4 | not run |
-| BM25 + budget + excerpts, plain prompt | 64.8 | not run |
-| + `build_answer_prompt` | 77.2 | 82.8 |
-| + hybrid search (`StaticEmbedder`) | 78.0 | 87.4 |
-| Perfect retrieval (control) | 79.4 | 93.6 |
+| Setup | `gpt-4o-mini` answering | `gpt-4o` answering | `gpt-5-mini` answering |
+|---|---:|---:|---:|
+| 1.4.0 search, top 10, plain prompt | 60.4 | not run | not run |
+| BM25 + budget + excerpts, plain prompt | 64.8 | not run | not run |
+| + `build_answer_prompt` | 77.2 | 82.8 | not run |
+| + hybrid search (`StaticEmbedder`) | 78.0 | 87.4 | 89.2 |
+| Perfect retrieval (control) | 79.4 | 93.6 | 93.4 |
 
 These are not comparable with scores published by other systems beyond
 orientation: harnesses, prompts and answer models differ. Full tables,

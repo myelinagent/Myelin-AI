@@ -38,6 +38,9 @@ selects the answer prompt: `reasoned` (default) or `direct` from
 `myelin.build_answer_prompt`, or `v1`, the plain prompt the first baselines
 used.
 
+For answer models that reason before answering (for example `gpt-5-mini`),
+raise the output cap with `--max-answer-tokens 4000`.
+
 `--embedder minishlab/potion-retrieval-32M` turns on hybrid search with a
 static embedding model (needs `pip install model2vec`).
 
