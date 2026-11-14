@@ -175,6 +175,28 @@ Any object with `encode(text) -> sequence of floats` (and optionally
 `encode_batch(texts)`) works in place of `StaticEmbedder`. If the embedder
 raises, writes and searches carry on lexically.
 
+### Facts at write time (opt-in)
+
+`add_conversation` stores a conversation one memory per message. Given a
+model, it also makes one call per conversation to extract short dated
+facts and indexes them with the messages they came from. Messages are
+still stored and returned whole.
+
+```python
+def llm(prompt: str) -> str:        # any model, any provider
+    ...
+
+client.add_conversation(
+    [("Ana", "Pickle came home yesterday!"), ("Ben", "So happy for you.")],
+    when=datetime(2023, 5, 20, tzinfo=UTC),
+    llm=llm, people=["Ana", "Ben"],     # omit people for a user/assistant chat
+)
+client.search("when did Ana get her dog")   # finds the message via "Ana adopted a dog on 2023-05-19."
+```
+
+On LoCoMo this raises accuracy by about 3 points; on LongMemEval-S it
+made no measurable difference (tables below).
+
 ### Measured on LongMemEval-S
 
 All 500 questions, judged by `gpt-4o` with the benchmark's own prompts, one
@@ -477,6 +499,7 @@ client.add(content, *, user_id=None, metadata=None, event=None,
            confidence=0.5, importance=0.5, outcome=None,
            t_valid=None, index_text=None) -> Memory                       # outcome= 1.4
 client.add_many(items, *, user_id=None) -> list[Memory]   # text or dicts of add() arguments
+client.add_conversation(turns, *, user_id=None, when=None, llm=None, people=None) -> list[Memory]
 client.set_index_text(memory_id, index_text) -> bool      # extra text to be found by
 client.search(query, *, user_id=None, top_k=10, as_of=None,
               session_id=None, modes=("working","session","long_term")) -> list[SearchResult]
