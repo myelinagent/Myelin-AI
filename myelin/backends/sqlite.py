@@ -157,12 +157,21 @@ CREATE TABLE IF NOT EXISTS memory_vectors (
 CREATE INDEX IF NOT EXISTS idx_memory_vectors_user ON memory_vectors(user_id);
 """
 
-# Reciprocal-rank fusion of the lexical and vector rankings. The vector
-# ranking gets twice the weight: on LongMemEval-S that beat equal weights
-# and lexical-heavy weights for every embedding model tried.
+# Reciprocal-rank fusion of the lexical and vector rankings, in two
+# parts (bench/results/fusion.md):
+#
+# * The body of the list uses a vector-heavy fusion with a large rank
+#   constant. It finds the most evidence deep in the list, which is what
+#   a token-budgeted context needs.
+# * The first ``_HEAD_SIZE`` places use equal weights and a small rank
+#   constant, so each ranking's best hits stay on top. The vector-heavy
+#   fusion alone pushed the right short messages out of the top 10
+#   (LoCoMo, all evidence in the top 10: 39.6% against 51.8%).
 _RRF_K = 60
 _LEXICAL_WEIGHT = 1.0
 _VECTOR_WEIGHT = 2.0
+_HEAD_SIZE = 20
+_HEAD_RRF_K = 10
 # How far down each ranking fusion looks.
 _FUSION_DEPTH = 300
 
@@ -181,6 +190,21 @@ def _tokens(text: str) -> set[str]:
         for t in _TOKEN_RE.findall(text)
         if t.lower() not in _STOPWORDS
     }
+
+
+def _fuse(
+    by_words: Sequence[str],
+    by_vector: Sequence[str],
+    lexical_weight: float,
+    vector_weight: float,
+    rank_constant: int,
+) -> dict[str, float]:
+    """Reciprocal-rank fusion of two rankings of memory ids."""
+    fused: dict[str, float] = defaultdict(float)
+    for weight, ranking in ((lexical_weight, by_words), (vector_weight, by_vector)):
+        for rank, memory_id in enumerate(ranking):
+            fused[memory_id] += weight / (rank_constant + rank)
+    return fused
 
 
 def _fts_query(text: str) -> str:
@@ -637,13 +661,17 @@ class SqliteBackend:
             if not by_vector:
                 return None
             by_words = self._lexical_ranking(query, user_id, depth)
-            fused: dict[str, float] = defaultdict(float)
-            for weight, ranking in (
-                (_LEXICAL_WEIGHT, by_words), (_VECTOR_WEIGHT, by_vector)
-            ):
-                for rank, memory_id in enumerate(ranking):
-                    fused[memory_id] += weight / (_RRF_K + rank)
+            fused = _fuse(by_words, by_vector, _LEXICAL_WEIGHT, _VECTOR_WEIGHT, _RRF_K)
             ordered = sorted(fused, key=lambda i: (-fused[i], i))
+            if _HEAD_SIZE > 0 and ordered:
+                top = _fuse(by_words, by_vector, 1.0, 1.0, _HEAD_RRF_K)
+                head = sorted(top, key=lambda i: (-top[i], i))[:_HEAD_SIZE]
+                # Keep scores decreasing down the whole list.
+                lift = fused[ordered[0]]
+                for memory_id in head:
+                    fused[memory_id] = lift + top[memory_id]
+                in_head = set(head)
+                ordered = head + [i for i in ordered if i not in in_head]
             memories = {m.id: m for m in self.get_batch(ordered)}
         results: list[SearchResult] = []
         for memory_id in ordered:

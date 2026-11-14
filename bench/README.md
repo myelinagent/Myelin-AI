@@ -141,3 +141,13 @@ python -m bench.scale --sizes 5000 50000 --embedder minishlab/potion-retrieval-3
 
 Write throughput and recall latency on synthetic text; needs no data and no
 model. Results: [`results/scale.md`](results/scale.md).
+
+## Cite feedback
+
+```bash
+python -m bench.cite_feedback --data locomo10.json --embedder minishlab/potion-retrieval-32M
+```
+
+Half of each LoCoMo conversation's questions give cite feedback, the other
+half are scored with cite-informed ranking off and on. No model. Results,
+with the hybrid fusion measurements: [`results/fusion.md`](results/fusion.md).

@@ -10,6 +10,13 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Changed
 
+- **Hybrid search ranks its first 20 results by a balanced fusion.** The
+  vector-heavy fusion pushed the right short messages out of the top
+  results (LoCoMo, all evidence in the top 10: 39.6%, against 54.9% for
+  lexical search alone). The first 20 places now use equal weights and a
+  small rank constant, the rest are unchanged: 51.8% on LoCoMo, 77.5%
+  unchanged on LongMemEval-S, and the same evidence within a token
+  budget on both. See `bench/results/fusion.md`.
 - **Excerpts use their whole budget.** A memory up to 1.5 times
   `max_result_tokens` is returned whole, and an excerpt grows outward
   from the passages that match the query until the limit is reached (a
@@ -60,6 +67,10 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Added
 
+- **`python -m bench.cite_feedback`**: a held-out test of cite-informed
+  ranking, with no model. Feedback that names the useful memory is worth
+  about 5 points of top-5 evidence with hybrid search; feedback that only
+  says whether the answer was right is not.
 - **`MemoryClient.add_conversation(turns, when=, llm=, people=)`** stores a
   conversation one memory per message and, given a model, indexes facts
   extracted from it in the same call.
@@ -81,8 +92,8 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
   (`bench/results/longmemeval_s_accuracy.md`).
 - **Hybrid search: `MemoryClient(embedder=...)`.** With an embedder, each
   memory is embedded when written and each query when searched, and the
-  vector ranking is fused with BM25 (reciprocal-rank fusion, vector weight
-  2). Vectors live in SQLite and are compared by a full scan; numpy is used
+  vector ranking is fused with BM25 (reciprocal-rank fusion; see the
+  fusion entry under Changed). Vectors live in SQLite and are compared by a full scan; numpy is used
   when installed and is not required. `myelin.embedders.StaticEmbedder`
   (extra `myelin-ai[static]`) is a CPU-only model2vec embedder.
   `backfill_embeddings()` embeds memories written earlier. If the embedder
