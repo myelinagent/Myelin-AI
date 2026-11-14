@@ -130,6 +130,10 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Fixed
 
+- **Hybrid search now sees vectors written by another process.** The
+  in-memory vector cache was only refreshed by this process's own writes,
+  so memories added through another connection were missing from the
+  embedding channel until then.
 - **`requires-python` is now `>=3.11`.** The package declared support for
   Python 3.10 but imports `datetime.UTC`, which 3.10 does not have, so it
   failed on import there. The metadata now matches what runs.

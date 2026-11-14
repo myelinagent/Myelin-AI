@@ -308,7 +308,7 @@ class SqliteBackend:
             self._fts = self._init_fts()
             # user_id -> (memory ids, their vectors), built on first
             # vector search and dropped when that user's vectors change.
-            self._vector_cache: dict[str, tuple[list[str], Any, int]] = {}
+            self._vector_cache: dict[str, tuple[list[str], Any, int, int]] = {}
 
     def _init_fts(self) -> bool:
         """Create the full-text index, indexing any memories written
@@ -556,8 +556,11 @@ class SqliteBackend:
         """Memory ids of ``user_id`` by cosine similarity to the query,
         best first. Empty when the user has no vectors of that size."""
         query = array("f", _unit_vector_bytes(query_vector))
+        # data_version moves when another connection commits, so vectors
+        # written by another process are not missed.
+        version = self._conn.execute("PRAGMA data_version").fetchone()[0]
         cached = self._vector_cache.get(user_id)
-        if cached is None or cached[2] != len(query):
+        if cached is None or cached[2] != len(query) or cached[3] != version:
             rows = self._conn.execute(
                 "SELECT memory_id, vector FROM memory_vectors WHERE user_id = ?",
                 (user_id,),
@@ -573,9 +576,9 @@ class SqliteBackend:
                 vectors = np.frombuffer(
                     b"".join(r[1] for r in rows), dtype=np.float32
                 ).reshape(len(rows), len(query))
-            cached = (ids, vectors, len(query))
+            cached = (ids, vectors, len(query), version)
             self._vector_cache[user_id] = cached
-        ids, vectors, _ = cached
+        ids, vectors, _, _ = cached
         if not ids:
             return []
         if isinstance(vectors, list):
@@ -585,7 +588,14 @@ class SqliteBackend:
             import numpy as np
 
             scores = vectors @ np.frombuffer(query.tobytes(), dtype=np.float32)
-            order = np.argsort(-scores, kind="stable").tolist()
+            if 0 < limit < len(ids):
+                # Pick the best ``limit`` first; sorting every score is the
+                # slow part on a large store. Ties at the cut are kept.
+                cut = np.partition(scores, len(ids) - limit)[len(ids) - limit]
+                keep = np.flatnonzero(scores >= cut)
+                order = keep[np.argsort(-scores[keep], kind="stable")].tolist()
+            else:
+                order = np.argsort(-scores, kind="stable").tolist()
         return [ids[i] for i in order[:limit]]
 
     def _lexical_ranking(self, query: str, user_id: str, limit: int) -> list[str]:

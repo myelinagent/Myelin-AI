@@ -197,3 +197,48 @@ def test_static_embedder_reports_a_missing_dependency(monkeypatch):
     monkeypatch.setitem(sys.modules, "model2vec", None)
     with pytest.raises(ImportError, match=r"myelin-ai\[static\]"):
         StaticEmbedder().encode("hello")
+
+
+def test_vectors_written_through_another_connection_are_searched(tmp_path):
+    """The in-memory vector cache must notice another process's writes."""
+    from myelin.backends.sqlite import SqliteBackend
+
+    path = str(tmp_path / "shared.db")
+    reader, writer = SqliteBackend(path), SqliteBackend(path)
+    try:
+        first = writer.add_memories(
+            [{"content": "alpha", "user_id": "u", "vector": [1.0, 0.0]}]
+        )[0]
+        assert reader._vector_ranking("u", [1.0, 0.0], 5) == [first.id]
+        second = writer.add_memories(
+            [{"content": "beta", "user_id": "u", "vector": [0.0, 1.0]}]
+        )[0]
+        assert reader._vector_ranking("u", [0.0, 1.0], 5) == [second.id, first.id]
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_vector_ranking_top_k_matches_a_full_sort():
+    import random
+
+    from myelin.backends.sqlite import SqliteBackend
+
+    rng = random.Random(4)
+    backend = SqliteBackend()
+    try:
+        backend.add_memories(
+            [
+                {"content": f"m{i}", "user_id": "u",
+                 "vector": [rng.gauss(0, 1) for _ in range(8)]}
+                for i in range(300)
+            ]
+            + [{"content": "tie", "user_id": "u", "vector": [1.0] + [0.0] * 7}] * 3
+        )
+        query = [1.0] + [0.0] * 7
+        full = backend._vector_ranking("u", query, 1000)
+        assert len(full) == 303
+        for k in (1, 2, 10, 302):
+            assert backend._vector_ranking("u", query, k) == full[:k]
+    finally:
+        backend.close()
