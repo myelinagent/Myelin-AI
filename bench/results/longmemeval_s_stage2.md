@@ -110,6 +110,43 @@ precision, not coverage. The next gains should come from ranking evidence
 higher inside the same budget (a reranker, facts extracted at write time)
 and not from showing more.
 
+## With a current answer model: `gpt-5-mini`
+
+The 94 to 95% scores other systems publish use answer models newer than
+`gpt-4o`. Same setup as above (hybrid search, 6,000-token budget,
+300-token excerpts, top three turns whole, prompt `myelin-reasoned-v2`,
+judge `gpt-4o`), with `openai/gpt-5-mini` answering and
+`--max-answer-tokens 4000`, since this model spends output tokens on
+hidden reasoning. All 500 questions, one run each, 2026-11-14.
+
+| | `gpt-4o`, hybrid | `gpt-5-mini`, hybrid | `gpt-5-mini`, oracle |
+|---|---:|---:|---:|
+| **Accuracy (overall)** | 87.4 | **89.2** | 93.4 |
+| Accuracy (task-averaged) | 86.8 | 90.2 | 94.0 |
+| single-session-user | 98.6 | 97.1 | 95.7 |
+| single-session-assistant | 96.4 | 96.4 | 100.0 |
+| single-session-preference | 66.7 | 83.3 | 90.0 |
+| multi-session | 81.2 | 78.2 | 86.5 |
+| temporal-reasoning | 85.7 | 90.2 | 95.5 |
+| knowledge-update | 92.3 | 96.2 | 96.2 |
+| abstention subset | 66.7 | 90.0 | 86.7 |
+
+- **89.2% overall, 90.2% task-averaged.** Published `gpt-5-mini` results
+  on this benchmark are around 94 to 95% (Mastra reports 94.87%); those
+  figures are self-reported from other harnesses and prompts.
+- **The model swap is worth 1.8 points here**, not the ten it was worth to
+  a system whose `gpt-4o` score was 84. Most of what a stronger reader
+  buys was already bought by the prompt and hybrid retrieval.
+- **It helps where judgement matters**: preference 66.7 to 83.3,
+  abstention 66.7 to 90.0, temporal 85.7 to 90.2. Multi-session slipped
+  from 81.2 to 78.2, inside the noise of 133 questions.
+- **Perfect retrieval gives 93.4**, the same ceiling as `gpt-4o` (93.6).
+  So about 6 points of the benchmark are beyond this prompt whatever is
+  retrieved, and Myelin is 4.2 points under its own ceiling. That gap is
+  in multi-session (78.2 against 86.5), preference (83.3 against 90.0) and
+  temporal (90.2 against 95.5) questions.
+- No answer was empty; one of 500 reached the 4,000-token cap.
+
 ## Next
 
 1. ~~Batch embedding at ingest~~ Done: `add_many` embeds a batch in one
