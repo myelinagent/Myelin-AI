@@ -41,7 +41,8 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
   `backfill_embeddings()` embeds memories written earlier. If the embedder
   raises, writes and searches continue lexically. On LongMemEval-S the share
   of questions with every evidence turn in the answerer's context rose from
-  85.3% to 92.3% (`bench/results/longmemeval_s_stage2.md`).
+  85.3% to 92.3%, and accuracy with `gpt-4o` answering from 82.8% to 87.4%
+  (`bench/results/longmemeval_s_stage2.md`).
 - **`build_answer_prompt(history, question, now=..., style=...)`** wraps
   recalled context in instructions for the cases where answering models go
   wrong with memory: changed facts, totals and orderings, dates relative to
