@@ -142,26 +142,34 @@ class ConsolidationReport:
 class ApoptosisReport:
     """Result of `MemoryClient.prune()`.
 
-    `quarantined_count`: how many active facts were promoted to
-    quarantined during this call.
+    `superseded_count`: facts marked as no longer current this call,
+    because a later fact states a different value for the same subject
+    and predicate. They keep their place in history (`search(as_of=...)`)
+    and leave current search.
 
-    `tombstoned_count`: how many quarantined facts (from prior calls)
-    aged past the caspase window during this call and were
-    tombstoned. Tombstoned facts are removed from the active
-    retrieval view but persist in the audit substrate.
+    `quarantined_count`: how many healthy facts were moved to quarantine
+    this call. Quarantined facts are hidden from search and kept in the
+    store; `get(id)` still returns them.
 
-    `retained_count`: active facts that survived this pass with no
-    state change.
+    `recovered_count`: quarantined facts whose health rose back above
+    the threshold and were restored this call.
 
-    The state machine is `active → quarantined → tombstoned`. Once a
-    fact is tombstoned, `search()` will never return it; `get(id)`
-    returns None as if it were deleted. The fact persists as an
-    audit-trail row queryable via internal forensic APIs only.
+    `tombstoned_count`: quarantined facts moved to the audit table this
+    call. Only non-zero when `prune(tombstone=True)` is used; tombstoned
+    facts are gone from `search()` and `get()`.
+
+    `retained_count`: facts that neither entered quarantine nor were
+    tombstoned this call.
+
+    The state machine is `healthy ⇄ quarantined`, with `→ tombstoned`
+    only on request.
     """
 
     quarantined_count: int = 0
     tombstoned_count: int = 0
     retained_count: int = 0
+    superseded_count: int = 0
+    recovered_count: int = 0
     scanned: int = 0
     caspase_window_days: int = 7
 

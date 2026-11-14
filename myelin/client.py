@@ -39,6 +39,7 @@ from myelin._internal.health import (
     CASPASE_WINDOW_DAYS,
     QUARANTINE_THRESHOLD,
     compute_contradiction_counts,
+    find_superseded,
     memory_health,
 )
 from myelin._internal.salience import (
@@ -597,6 +598,8 @@ class MemoryClient:
         as_of: datetime | None = None,
         session_id: str | None = None,
         modes: tuple[str, ...] = ("long_term",),
+        include_quarantined: bool = False,
+        include_superseded: bool = False,
     ) -> list[SearchResult]:
         """Semantic-ish lexical search over the substrate.
 
@@ -604,6 +607,12 @@ class MemoryClient:
         only facts valid at that timestamp — i.e. ``t_valid <= as_of``
         AND (``t_invalid is None OR t_invalid > as_of``). Tombstoned
         facts are never returned.
+
+        Search returns what is current and trusted: quarantined facts
+        are hidden, and so are facts a later one has replaced (unless
+        ``as_of`` names a time when they still held). Pass
+        ``include_quarantined=True`` or ``include_superseded=True`` to
+        see them; ``get(id)`` always returns them.
 
         v1.2 ``modes`` extension (FR-B5): search in tiered order. Valid
         modes are "working", "session", "long_term". Default
@@ -650,6 +659,10 @@ class MemoryClient:
 
         # Embed the query once, for the long-term tier's vector channel.
         long_term_extra: dict[str, Any] = {}
+        if include_quarantined:
+            long_term_extra["include_quarantined"] = True
+        if include_superseded:
+            long_term_extra["include_superseded"] = True
         if "long_term" in effective_modes and self._vectors_enabled():
             query_vector = self._embed(query)
             if query_vector is not None:
@@ -669,12 +682,15 @@ class MemoryClient:
                 tier_hits = self._search_working_set(
                     query=query, session_id=session_id,
                     top_k=remaining, as_of=as_of, user_id=scope,
+                    include_quarantined=include_quarantined,
+                    include_superseded=include_superseded,
                 )
                 hit_counter = "_n_hits_working"
             elif mode == "session":
                 tier_hits = self._search_session_scope(
                     query=query, session_id=session_id,
                     top_k=remaining, as_of=as_of, user_id=scope,
+                    extra=long_term_extra,
                 )
                 hit_counter = "_n_hits_session"
             else:  # long_term
@@ -736,6 +752,8 @@ class MemoryClient:
         as_of: datetime | None = None,
         session_id: str | None = None,
         modes: tuple[str, ...] = ("long_term",),
+        include_quarantined: bool = False,
+        include_superseded: bool = False,
     ) -> list[SearchResult]:
         """Search, keeping as many top results as fit in ``token_budget``.
 
@@ -773,6 +791,8 @@ class MemoryClient:
             as_of=as_of,
             session_id=session_id,
             modes=modes,
+            include_quarantined=include_quarantined,
+            include_superseded=include_superseded,
         )
         if max_result_tokens is not None:
             hits = with_excerpts(
@@ -788,6 +808,8 @@ class MemoryClient:
         top_k: int,
         as_of: datetime | None,
         user_id: str,
+        include_quarantined: bool = False,
+        include_superseded: bool = False,
     ) -> list[SearchResult]:
         """Search the session's working set (RAM-resident memory ids).
 
@@ -819,10 +841,19 @@ class MemoryClient:
         for memory in self._get_many(memory_ids):
             if memory.user_id != user_id:
                 continue
-            if as_of is not None:
+            if not include_quarantined and memory.health_state != "healthy":
+                continue
+            if as_of is None:
+                if memory.t_invalid is not None and not include_superseded:
+                    continue
+            else:
                 if memory.t_valid > as_of:
                     continue
-                if memory.t_invalid is not None and memory.t_invalid <= as_of:
+                if (
+                    not include_superseded
+                    and memory.t_invalid is not None
+                    and memory.t_invalid <= as_of
+                ):
                     continue
             # Reuse the backend's _score for parity with long_term ranking.
             score = self._backend._score(memory, q_tokens)  # noqa: SLF001
@@ -852,6 +883,7 @@ class MemoryClient:
         top_k: int,
         as_of: datetime | None,
         user_id: str,
+        extra: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
         """Search memories tagged with this session in their metadata.
 
@@ -866,6 +898,7 @@ class MemoryClient:
         raw = self._backend.search(
             query=query, user_id=user_id,
             top_k=top_k * 5, as_of=as_of,
+            **(extra or {}),
         )
         session_hits = [
             r for r in raw
@@ -1222,27 +1255,38 @@ class MemoryClient:
         user_id: str | None = None,
         now: datetime | None = None,
         caspase_window_days: int = CASPASE_WINDOW_DAYS,
+        tombstone: bool = False,
     ) -> ApoptosisReport:
-        """Trigger P3 apoptosis: quarantine → tombstone state machine.
+        """Forget on purpose: retire outdated facts and quarantine
+        unhealthy ones. Nothing is removed unless ``tombstone=True``.
 
-        Two-phase per call:
-        1. **Quarantine promotion.** Each active fact's health is
-           computed (`memory_health(memory, contradiction_count=...)`).
-           Facts with `health < QUARANTINE_THRESHOLD` (0.4) are
-           transitioned to `quarantined` and stamped with
-           `quarantine_entered_at`.
-        2. **Caspase cascade.** Facts that have been quarantined for
-           `caspase_window_days` (default 7) OR whose current health is
-           below `CASPASE_THRESHOLD` (0.2) are transitioned to
-           `tombstoned`. Tombstoned facts are invisible to `search()`
-           but persist in the audit substrate.
+        Each call does, in order:
 
-        `now` defaults to UTC now; pass an explicit datetime for
-        deterministic tests (e.g. `now = datetime.now(UTC) +
-        timedelta(days=14)` to fast-forward past the caspase window).
+        1. **Supersede.** When a later fact states a different value for
+           the same ``subject`` and ``predicate`` (from metadata), the
+           earlier fact gets ``t_invalid`` set to the moment the later
+           one took effect, and the later fact's id in
+           ``metadata["_superseded_by"]``. It leaves current search and
+           stays findable with ``search(as_of=...)`` for the time it
+           held.
+        2. **Recover.** A quarantined fact whose health is back at or
+           above ``QUARANTINE_THRESHOLD`` (0.4) returns to healthy.
+        3. **Tombstone**, only with ``tombstone=True``: quarantined facts
+           that have been in quarantine for ``caspase_window_days``
+           (default 7), or whose health is below ``CASPASE_THRESHOLD``
+           (0.2), are moved to the audit table and are gone from
+           ``search()`` and ``get()``.
+        4. **Quarantine.** A healthy fact whose health is below the
+           threshold is quarantined: hidden from search, kept in the
+           store, and restorable by step 2.
 
-        Returns `ApoptosisReport(quarantined_count, tombstoned_count,
-        retained_count, scanned, caspase_window_days)`.
+        Health comes from age, confidence, importance, contradictions
+        and the record built by ``cite()``.
+
+        `now` defaults to the client's clock; pass an explicit datetime
+        for deterministic runs.
+
+        Returns an `ApoptosisReport`.
         """
         target_user = user_id or self._user_id
         if now is None:
@@ -1251,50 +1295,58 @@ class MemoryClient:
             now = now.replace(tzinfo=UTC)
 
         memories = self._backend.list_memories(user_id=target_user)
-        contradiction_counts = compute_contradiction_counts(memories)
-
         report = ApoptosisReport(
             scanned=len(memories),
             caspase_window_days=caspase_window_days,
         )
-        caspase_cutoff = now - timedelta(days=caspase_window_days)
 
-        # --- Phase 2 first: tombstone aged quarantined facts ----
-        # Run caspase BEFORE quarantine promotion so a fact that's been
-        # quarantined for >= window days is tombstoned this cycle, not
-        # next. Order matches the cortex F_BI_5 scheduler ordering.
+        # --- 1. Supersede outdated values ------------------------
+        invalidate = getattr(self._backend, "invalidate", None)
+        if callable(invalidate):
+            for old_id, newer in find_superseded(memories).items():
+                if invalidate(
+                    old_id, t_invalid=newer.t_valid, superseded_by=newer.id
+                ):
+                    report.superseded_count += 1
+            if report.superseded_count:
+                memories = self._backend.list_memories(user_id=target_user)
+
+        contradiction_counts = compute_contradiction_counts(memories)
+
+        def health_of(mem: Memory) -> float:
+            return memory_health(
+                mem,
+                now=now,
+                contradiction_count=contradiction_counts.get(mem.id, 0),
+            )
+
+        caspase_cutoff = now - timedelta(days=caspase_window_days)
         for mem in memories:
             if mem.health_state != "quarantined":
+                continue
+            health = health_of(mem)
+            # --- 2. Recover ---------------------------------------
+            if health >= QUARANTINE_THRESHOLD:
+                self._backend.transition_state(mem.id, new_state="healthy")
+                report.recovered_count += 1
+                continue
+            # --- 3. Tombstone, on request -------------------------
+            if not tombstone:
                 continue
             entered = mem.quarantine_entered_at
             if entered is None:
                 continue
             if entered.tzinfo is None:
                 entered = entered.replace(tzinfo=UTC)
-            health = memory_health(
-                mem,
-                now=now,
-                contradiction_count=contradiction_counts.get(mem.id, 0),
-            )
-            should_caspase = (
-                entered <= caspase_cutoff or health < CASPASE_THRESHOLD
-            )
-            if should_caspase:
-                self._backend.transition_state(
-                    mem.id, new_state="tombstoned"
-                )
+            if entered <= caspase_cutoff or health < CASPASE_THRESHOLD:
+                self._backend.transition_state(mem.id, new_state="tombstoned")
                 report.tombstoned_count += 1
 
-        # --- Phase 1: quarantine sick active facts --------------
+        # --- 4. Quarantine unhealthy facts ------------------------
         for mem in memories:
             if mem.health_state != "healthy":
                 continue
-            health = memory_health(
-                mem,
-                now=now,
-                contradiction_count=contradiction_counts.get(mem.id, 0),
-            )
-            if health < QUARANTINE_THRESHOLD:
+            if health_of(mem) < QUARANTINE_THRESHOLD:
                 self._backend.transition_state(
                     mem.id, new_state="quarantined", quarantine_entered_at=now
                 )

@@ -77,9 +77,9 @@ def test_prune_tombstones_after_window(client):
     # First pass: quarantines them.
     first = client.prune()
     assert first.quarantined_count >= 25
-    # Second pass 14 days later: caspase cascades them.
+    # Second pass 14 days later, asked to tombstone: caspase cascades them.
     future = datetime.now(UTC) + timedelta(days=14)
-    second = client.prune(now=future)
+    second = client.prune(now=future, tombstone=True)
     assert second.tombstoned_count >= 25, (
         f"expected >=25 tombstoned after window, got {second.tombstoned_count}"
     )
@@ -91,7 +91,7 @@ def test_prune_does_not_delete(client):
         _poison_fact(client, i)
     client.prune()
     future = datetime.now(UTC) + timedelta(days=14)
-    client.prune(now=future)
+    client.prune(now=future, tombstone=True)
     audit = client._backend.list_memories(  # noqa: SLF001
         user_id="scott", include_tombstoned=True
     )
@@ -104,7 +104,7 @@ def test_search_excludes_tombstones(client):
     _poison_fact(client, 999)
     client.prune()
     future = datetime.now(UTC) + timedelta(days=14)
-    client.prune(now=future)
+    client.prune(now=future, tombstone=True)
     # Healthy fact still searchable.
     hits = client.search("healthy")
     assert any(h.memory.id == mem.id for h in hits)
@@ -117,7 +117,7 @@ def test_get_returns_none_for_tombstoned(client):
     _poison_fact(client, 0)
     client.prune()
     future = datetime.now(UTC) + timedelta(days=14)
-    client.prune(now=future)
+    client.prune(now=future, tombstone=True)
     audit = client._backend.list_memories(  # noqa: SLF001
         user_id="scott", include_tombstoned=True
     )
@@ -150,7 +150,7 @@ def test_prune_caspase_window_override(client):
     client.prune()  # quarantine
     # Pass 0-day window so even just-quarantined facts caspase next call.
     future = datetime.now(UTC) + timedelta(seconds=1)
-    report = client.prune(now=future, caspase_window_days=0)
+    report = client.prune(now=future, caspase_window_days=0, tombstone=True)
     assert report.tombstoned_count >= 9
     assert report.caspase_window_days == 0
 
@@ -175,3 +175,56 @@ def test_idempotent_prune(client):
     r2 = client.prune()
     assert r1.quarantined_count == r2.quarantined_count
     assert r1.tombstoned_count == r2.tombstoned_count
+
+
+# ---- quarantine is where forgetting stops unless tombstoning is asked for
+
+
+def test_prune_never_tombstones_by_default(client):
+    for i in range(5):
+        _poison_fact(client, i)
+    first = client.prune()
+    assert first.quarantined_count == 5
+    later = client.prune(now=datetime.now(UTC) + timedelta(days=60))
+    assert later.tombstoned_count == 0
+    kept = client._backend.list_memories(user_id="scott")  # noqa: SLF001
+    assert len(kept) == 5
+    assert {m.health_state for m in kept} == {"quarantined"}
+
+
+def test_quarantined_facts_are_hidden_from_search_but_kept(client):
+    mem = client.add("poison fact about lunar tides", confidence=0.05, importance=0.1)
+    client._backend._conn.execute(  # noqa: SLF001 — backdate so age penalty fires
+        "UPDATE memories SET t_valid = ? WHERE id = ?",
+        ((datetime.now(UTC) - timedelta(days=90)).isoformat(), mem.id),
+    )
+    client._backend._conn.commit()  # noqa: SLF001
+    assert client.prune().quarantined_count == 1
+    assert client.search("lunar tides") == []
+    assert client.recall("lunar tides") == []
+    assert client.get(mem.id).health_state == "quarantined"
+    shown = client.search("lunar tides", include_quarantined=True)
+    assert [h.memory.id for h in shown] == [mem.id]
+
+
+def test_a_quarantined_fact_recovers_when_its_health_does():
+    c = MemoryClient(user_id="scott", cite_learning=True)
+    try:
+        mem = c.add("a doubtful fact about lunar tides", confidence=0.1, importance=0.5)
+        c._backend._conn.execute(  # noqa: SLF001
+            "UPDATE memories SET t_valid = ? WHERE id = ?",
+            ((datetime.now(UTC) - timedelta(days=40)).isoformat(), mem.id),
+        )
+        c._backend._conn.commit()  # noqa: SLF001
+        assert c.prune().quarantined_count == 1
+        assert c.search("lunar tides") == []
+        # It keeps proving right when it is used.
+        for _ in range(8):
+            c.cite(mem.id, answer_correct=True)
+        report = c.prune()
+        assert report.recovered_count == 1
+        assert report.quarantined_count == 0
+        assert c.get(mem.id).health_state == "healthy"
+        assert [h.memory.id for h in c.search("lunar tides")] == [mem.id]
+    finally:
+        c.close()

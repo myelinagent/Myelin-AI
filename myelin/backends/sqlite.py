@@ -44,7 +44,7 @@ import threading
 import uuid
 from array import array
 from collections import defaultdict
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -432,19 +432,46 @@ class SqliteBackend:
         top_k: int = 10,
         as_of: datetime | None = None,
         query_vector: Sequence[float] | None = None,
+        include_quarantined: bool = False,
+        include_superseded: bool = False,
     ) -> list[SearchResult]:
+        """Rank the user's memories against ``query``.
+
+        By default only memories that are healthy and current are
+        returned: quarantined memories are hidden, and so are memories
+        whose ``t_invalid`` is set (a later fact replaced them). With
+        ``as_of``, validity is judged at that moment instead, so a
+        replaced fact is found for a time when it still held. The two
+        ``include_*`` flags lift those filters.
+        """
         if top_k <= 0:
             return []
+        if as_of is not None and as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=UTC)
+
+        def visible(mem: Memory) -> bool:
+            if not include_quarantined and mem.health_state != "healthy":
+                return False
+            if as_of is None:
+                return include_superseded or mem.t_invalid is None
+            if mem.t_valid > as_of:
+                return False
+            return include_superseded or mem.t_invalid is None or mem.t_invalid > as_of
+
         if query_vector is not None:
-            fused = self._search_hybrid(query, user_id, top_k, as_of, query_vector)
+            fused = self._search_hybrid(query, user_id, top_k, query_vector, visible)
             if fused is not None:
                 return fused
         if self._fts:
-            return self._search_fts(query, user_id, top_k, as_of)
+            return self._search_fts(
+                query, user_id, top_k, visible,
+                current_only=as_of is None and not include_superseded,
+                healthy_only=not include_quarantined,
+            )
         q_tokens = _tokens(query)
         if not q_tokens:
             return []
-        rows = self._scan_for_user(user_id, as_of=as_of)
+        rows = [m for m in self._scan_for_user(user_id, as_of=None) if visible(m)]
         scored: list[tuple[float, Memory]] = []
         for mem in rows:
             score = self._score(mem, q_tokens)
@@ -574,13 +601,11 @@ class SqliteBackend:
         query: str,
         user_id: str,
         top_k: int,
-        as_of: datetime | None,
         query_vector: Sequence[float],
+        visible: Callable[[Memory], bool],
     ) -> list[SearchResult] | None:
         """Fuse the lexical and vector rankings. Returns None when the
         user has no comparable vectors, so the caller searches lexically."""
-        if as_of is not None and as_of.tzinfo is None:
-            as_of = as_of.replace(tzinfo=UTC)
         depth = max(_FUSION_DEPTH, top_k)
         with self._lock:
             by_vector = self._vector_ranking(user_id, query_vector, depth)
@@ -594,18 +619,11 @@ class SqliteBackend:
                 for rank, memory_id in enumerate(ranking):
                     fused[memory_id] += weight / (_RRF_K + rank)
             ordered = sorted(fused, key=lambda i: (-fused[i], i))
-            if as_of is None:
-                ordered = ordered[:top_k]
             memories = {m.id: m for m in self.get_batch(ordered)}
         results: list[SearchResult] = []
         for memory_id in ordered:
             memory = memories.get(memory_id)
-            if memory is None:
-                continue
-            if as_of is not None and (
-                memory.t_valid > as_of
-                or (memory.t_invalid is not None and memory.t_invalid <= as_of)
-            ):
+            if memory is None or not visible(memory):
                 continue
             results.append(SearchResult(memory=memory, score=fused[memory_id]))
             if len(results) >= top_k:
@@ -613,23 +631,39 @@ class SqliteBackend:
         return results
 
     def _search_fts(
-        self, query: str, user_id: str, top_k: int, as_of: datetime | None
+        self,
+        query: str,
+        user_id: str,
+        top_k: int,
+        visible: Callable[[Memory], bool],
+        *,
+        current_only: bool,
+        healthy_only: bool,
     ) -> list[SearchResult]:
-        """BM25-ranked search over the full-text index."""
+        """BM25-ranked search over the full-text index.
+
+        ``healthy_only`` and ``current_only`` are applied in SQL so that
+        ``LIMIT`` counts only rows that can be returned; ``visible`` is
+        the full check and also covers the point-in-time case, for which
+        every match is fetched.
+        """
         match = _fts_query(query)
         if not match:
             return []
-        if as_of is not None and as_of.tzinfo is None:
-            as_of = as_of.replace(tzinfo=UTC)
         sql = (
             "SELECT r.memory_id, bm25(memories_fts) AS rank "
             "FROM memories_fts JOIN memories_fts_rows r "
             "ON r.fts_rowid = memories_fts.rowid "
-            "WHERE memories_fts MATCH ? AND user_id = ? "
-            "ORDER BY rank, r.memory_id"
+            "JOIN memories m ON m.id = r.memory_id "
+            "WHERE memories_fts MATCH ? AND memories_fts.user_id = ?"
         )
         params: list[Any] = [match, user_id]
-        if as_of is None:
+        if healthy_only:
+            sql += " AND m.health_state = 'healthy'"
+        if current_only:
+            sql += " AND m.t_invalid IS NULL"
+        sql += " ORDER BY rank, r.memory_id"
+        if current_only:
             sql += " LIMIT ?"
             params.append(top_k)
         with self._lock:
@@ -638,12 +672,7 @@ class SqliteBackend:
         results: list[SearchResult] = []
         for memory_id, rank in ranked:
             memory = memories.get(memory_id)
-            if memory is None:
-                continue
-            if as_of is not None and (
-                memory.t_valid > as_of
-                or (memory.t_invalid is not None and memory.t_invalid <= as_of)
-            ):
+            if memory is None or not visible(memory):
                 continue
             # bm25() is lower-is-better and negative; expose it as a
             # higher-is-better score.
@@ -829,6 +858,44 @@ class SqliteBackend:
             )
             self._conn.commit()
             return cur.rowcount > 0
+
+    def invalidate(
+        self,
+        memory_id: str,
+        *,
+        t_invalid: datetime,
+        superseded_by: str | None = None,
+    ) -> bool:
+        """Mark a live memory as no longer current from ``t_invalid``.
+
+        The memory stays in the store and in point-in-time search for
+        moments before ``t_invalid``; it leaves current search. With
+        ``superseded_by``, the id of the memory that replaced it is
+        recorded in its metadata as ``_superseded_by``. Returns False for
+        an unknown or tombstoned id.
+        """
+        if t_invalid.tzinfo is None:
+            t_invalid = t_invalid.replace(tzinfo=UTC)
+        with self._lock:
+            cur = self._conn.cursor()
+            row = cur.execute(
+                "SELECT metadata_json FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            metadata = json.loads(row[0])
+            if superseded_by is not None:
+                metadata["_superseded_by"] = superseded_by
+            cur.execute(
+                "UPDATE memories SET t_invalid = ?, metadata_json = ? WHERE id = ?",
+                (
+                    _dt_to_iso(t_invalid.astimezone(UTC)),
+                    json.dumps(metadata),
+                    memory_id,
+                ),
+            )
+            self._conn.commit()
+            return True
 
     # ---- v1.2 cite-event surface --------------------------------
 

@@ -128,6 +128,8 @@ def _apoptosis_to_dict(report: ApoptosisReport) -> dict[str, Any]:
         "retained_count": report.retained_count,
         "scanned": report.scanned,
         "caspase_window_days": report.caspase_window_days,
+        "superseded_count": report.superseded_count,
+        "recovered_count": report.recovered_count,
     }
 
 
@@ -446,14 +448,14 @@ class MemoryClient:
         report = self._client.consolidate(user_id=user_id)
         return _consolidation_to_dict(report)
 
-    def prune(self, *, user_id: str) -> dict[str, Any]:
+    def prune(self, *, user_id: str, tombstone: bool = False) -> dict[str, Any]:
         """Trigger the P3 apoptosis sweep (Myelin extension).
 
         Returns the apoptosis report as a dict. Drop-in Mem0 callers
         don't have to invoke this; it's available for callers who want
         audit-preserving "forget on purpose" semantics.
         """
-        report = self._client.prune(user_id=user_id)
+        report = self._client.prune(user_id=user_id, tombstone=tombstone)
         return _apoptosis_to_dict(report)
 
     # ---- lifecycle ----------------------------------------------

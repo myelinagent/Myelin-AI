@@ -210,6 +210,44 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
+def find_superseded(memories: list["Memory"]) -> dict[str, "Memory"]:
+    """Map each outdated memory's id to the memory that replaced it.
+
+    A memory is outdated when another current memory states a different
+    value for the same (subject, predicate) at a strictly later time.
+    The replacement returned is the earliest such later memory, so its
+    ``t_valid`` is the moment the old value stopped being true. Memories
+    already marked invalid, tombstoned memories, multi-value predicates
+    and memories without subject/predicate metadata are left out, as in
+    ``compute_contradiction_counts``.
+    """
+    buckets: dict[tuple[str, str], list[Memory]] = {}
+    for m in memories:
+        if m.t_invalid is not None or m.health_state == "tombstoned":
+            continue
+        subj = m.metadata.get("subject")
+        pred = m.metadata.get("predicate")
+        if not (isinstance(subj, str) and isinstance(pred, str)):
+            continue
+        if _is_multi_value(pred):
+            continue
+        buckets.setdefault((subj, pred), []).append(m)
+
+    superseded: dict[str, Memory] = {}
+    for bucket in buckets.values():
+        if len(bucket) < 2:
+            continue
+        ordered = sorted(bucket, key=lambda m: (_as_utc(m.t_valid), m.id))
+        values = [_normalize(m.metadata.get("object", m.content)) for m in ordered]
+        for i, old in enumerate(ordered):
+            for j in range(i + 1, len(ordered)):
+                newer = ordered[j]
+                if values[j] != values[i] and _as_utc(newer.t_valid) > _as_utc(old.t_valid):
+                    superseded[old.id] = newer
+                    break
+    return superseded
+
+
 # Multi-value predicates — predicates where a single subject can hold
 # many concurrent active values. Mirrors `MULTI_VALUE_PREDICATES` in
 # `cortex.sleep.memory_schema` but pared to the personal-agent base
