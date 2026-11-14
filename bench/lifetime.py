@@ -85,7 +85,14 @@ def replay(
             batch = sessions[number]
             now[0] = batch[0].session_date
             stored = client.add_many(
-                [{"content": t.text, "t_valid": t.session_date} for t in batch]
+                [
+                    {
+                        "content": t.text,
+                        "t_valid": t.session_date,
+                        "metadata": {"session_id": t.session_id, "turn": t.index},
+                    }
+                    for t in batch
+                ]
             )
             id_of.update({t.dia_id: m.id for t, m in zip(batch, stored, strict=True)})
             # Questions come a little after the session they follow.

@@ -91,6 +91,53 @@ Telling needed from unneeded memories better than age does would take
 a signal decay does not use yet, such as how often a memory is
 retrieved and not used.
 
+## Grading memories together
+
+Health now weighs four things in one grade: age, a memory's own use,
+the use of related memories (close in the same conversation, or similar
+by embedding; `myelin/_internal/relations.py`), and how often it was
+retrieved for a question and not used. Weights (`W_RELATED` 2.0,
+`W_UNUSED` -0.3) were swept on five conversations and checked on the
+other five.
+
+Held-out conversations, decay + feedback, three schedules:
+
+| | top 5 | top 10 | top 20 | Needed a memory decay had hidden | Store still searchable |
+|---|---:|---:|---:|---:|---:|
+| use and age only | 52.3 | 59.9 | 64.9 | 6.8 | 65.0 |
+| **combined grade** | 52.8 | 60.1 | 65.8 | 6.1 | 70.4 |
+| relationships only | 51.8 | 59.8 | 63.6 | 2.9 | 83.2 |
+| unused penalty only | 52.8 | 60.8 | 67.4 | 11.7 | 48.7 |
+
+All ten conversations with the combined grade as the default, decay +
+feedback (compare the tables at the top, measured before it):
+
+| Questions asked | top 5 | top 10 | top 20 | Needed a memory decay had hidden | Store still searchable |
+|---|---:|---:|---:|---:|---:|
+| up to 6 sessions later, before | 53.5 | 60.9 | 65.6 | 7.1 | 68.7 |
+| up to 6 sessions later, combined | 53.6 ± 0.6 | 61.0 ± 0.3 | 66.6 ± 0.5 | 6.2 ± 0.2 | 73.3 |
+| up to 12 sessions later, before | 51.0 | 58.7 | 64.1 | 9.3 | 68.6 |
+| up to 12 sessions later, combined | 50.7 ± 0.2 | 58.1 ± 0.2 | 63.8 ± 0.6 | 9.9 ± 0.9 | 71.7 |
+
+- **Relationships protect.** Neighbours of used memories stay healthy,
+  so fewer needed memories are hidden, and fewer memories are pruned,
+  at about the exchange rate of simply decaying more slowly.
+  Similarity links did slightly better than conversation links.
+- **The unused penalty prunes.** It removes memories that keep being
+  retrieved without helping and lifts ranking by a point or two, and it
+  hides needed memories in proportion. A stronger penalty (-0.6)
+  collapsed the store.
+- **Together** they give a small gain when questions follow within a
+  few sessions (top 20 up a point, slightly fewer needed memories
+  hidden) and a small loss when questions come much later (top 10 down
+  about half a point). The differences are a few tenths to one point,
+  against a spread of about half a point between schedules.
+- The combined grade is a sounder design than age and own use alone,
+  and it is what makes the decision explainable (see the README). On
+  this benchmark it is not a step change: each question is asked once,
+  so a used memory's neighbours are only a little more likely to be
+  needed later than any other memory.
+
 ## Limits
 
 - One dataset. LoCoMo asks each question once, so use of a memory before
