@@ -1,0 +1,53 @@
+{
+  "manifest": {
+    "benchmark": "LoCoMo",
+    "data_file": "locomo10.json",
+    "data_sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4",
+    "conversations": 10,
+    "questions": 1540,
+    "system": "myelin",
+    "granularity": "utterance",
+    "token_budget": 6000,
+    "max_turn_tokens": 300,
+    "whole_turns": 3,
+    "embedder": "minishlab/potion-retrieval-32M",
+    "facts": "facts_v2.jsonl",
+    "show_facts": true,
+    "max_answer_tokens": 4000,
+    "answerer": "openai/gpt-5-mini",
+    "judge": "openai/gpt-4o-mini",
+    "prompt_version": "myelin-reasoned-v2",
+    "temperature": 0.0,
+    "git_commit": "99802694da3d19f02b72881d5d5e30bd4b91f562",
+    "started_at": "2026-11-14T06:36:37+00:00"
+  },
+  "answered": 1540,
+  "judged": 1540,
+  "accuracy": {
+    "overall": 0.912987012987013,
+    "by_category": {
+      "multi-hop": 0.900709219858156,
+      "temporal": 0.8847352024922118,
+      "open-domain": 0.7395833333333334,
+      "single-hop": 0.9476813317479191
+    },
+    "counts": {
+      "multi-hop": 282,
+      "temporal": 321,
+      "open-domain": 96,
+      "single-hop": 841
+    }
+  },
+  "retrieval": {
+    "evidence_all": 0.8549967341606793,
+    "evidence_share": 0.9074313434825696,
+    "questions_with_evidence": 1531
+  },
+  "cost": {
+    "answerer_prompt_tokens": 10031065,
+    "answerer_completion_tokens": 1589624,
+    "mean_context_tokens": 6513.678571428572,
+    "mean_context_turns": 144.46818181818182,
+    "mean_retrieve_seconds": 0.006396605674053244
+  }
+}
