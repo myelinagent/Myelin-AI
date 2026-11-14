@@ -590,6 +590,7 @@ class MemoryClient:
         from myelin.enrich import extract_facts
 
         kept = [(str(role), text) for role, text in turns if text and text.strip()]
+        session_id = _new_turn_id()
         names = list(people) if people else None
         facts: dict[int, list[str]] = {}
         if llm is not None and kept:
@@ -603,7 +604,12 @@ class MemoryClient:
                 )
         items: list[dict[str, Any]] = []
         for number, (role, text) in enumerate(kept):
-            item: dict[str, Any] = {"content": f"{role}: {text}"}
+            # Conversation order, so related messages can be graded
+            # together (see myelin._internal.relations).
+            item: dict[str, Any] = {
+                "content": f"{role}: {text}",
+                "metadata": {"session_id": session_id, "turn": number},
+            }
             if when is not None:
                 item["t_valid"] = when
             if facts.get(number):
@@ -1549,8 +1555,10 @@ class MemoryClient:
         Used memories are cited as useful, exactly as
         ``cite(id, answer_correct=True)``. The others are counted as
         "shown but not used": they rank lower the next time they are
-        relevant, and their health is left alone, so being unneeded for
-        one question never leads to a memory being forgotten.
+        relevant, and their health falls a little. One unneeded showing
+        does not get a memory forgotten; one that keeps being retrieved
+        and never used, with no used neighbours, fades sooner than its
+        age alone would have it.
 
         Returns ``{"used": n, "unused": m}``. No-op (zeros) when cite
         learning is off.

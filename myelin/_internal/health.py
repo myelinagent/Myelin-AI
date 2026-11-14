@@ -55,8 +55,11 @@ BIAS: float = 2.0
 # Graded together with a memory's own use: support from related memories
 # that were used (see myelin._internal.relations), and how often it was
 # shown for a question without being used.
-W_RELATED: float = 0.0
-W_UNUSED: float = 0.0
+# Weights from the memory-over-time benchmark (bench/results/lifetime.md):
+# on held-out conversations this pair ranked evidence a little higher and
+# hid fewer memories a later question needed than use and age alone.
+W_RELATED: float = 2.0
+W_UNUSED: float = -0.3
 # Use, related use and recency together may not outweigh one
 # contradiction (the EC-A5 rule in constants.py covers use alone).
 MAX_USE_LIFT: float = 3.4
