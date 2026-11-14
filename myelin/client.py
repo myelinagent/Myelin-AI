@@ -31,6 +31,7 @@ from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from myelin._internal.cite_ranking import pool_size, rerank_by_cites
 from myelin._internal.constants import env_is_strict_one
 from myelin._internal.dream import run_dream_cycle
 from myelin._internal.health import (
@@ -124,6 +125,7 @@ class MemoryClient:
         working_memory: bool | None = None,
         clock: Callable[[], datetime] | None = None,
         embedder: Any | None = None,
+        cite_ranking: bool = True,
     ) -> None:
         """Construct a MemoryClient.
 
@@ -159,7 +161,16 @@ class MemoryClient:
         written before an embedder was configured are found lexically
         only until :meth:`backfill_embeddings` is run. If the embedder
         raises, the write or search carries on without a vector.
+
+        ``cite_ranking`` (on by default, and only active when cite
+        learning is enabled) lets the record built by ``cite()`` nudge
+        long-term search: among memories relevant to the query, those
+        that led to right answers move up and those that led to wrong
+        ones move down. Memories that were never cited keep the position
+        relevance gave them. Pass ``False`` to use cites for forgetting
+        only.
         """
+        self._cite_ranking = bool(cite_ranking)
         self._clock = clock
         self._embedder = embedder
         if isinstance(backend, str):
@@ -667,11 +678,15 @@ class MemoryClient:
                 )
                 hit_counter = "_n_hits_session"
             else:  # long_term
+                use_cites = self._cite_ranking and self._cite_learning_enabled
                 tier_hits = self._backend.search(
                     query=query, user_id=scope,
-                    top_k=remaining, as_of=as_of,
+                    top_k=pool_size(remaining) if use_cites else remaining,
+                    as_of=as_of,
                     **long_term_extra,
                 )
+                if use_cites:
+                    tier_hits = rerank_by_cites(tier_hits, remaining)
                 hit_counter = "_n_hits_long_term"
 
             new_hits_this_tier = 0
