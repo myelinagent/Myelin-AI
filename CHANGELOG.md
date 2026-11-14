@@ -84,6 +84,9 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Fixed
 
+- **`requires-python` is now `>=3.11`.** The package declared support for
+  Python 3.10 but imports `datetime.UTC`, which 3.10 does not have, so it
+  failed on import there. The metadata now matches what runs.
 - **`prune()` no longer removes the current value of an updated fact.** When
   a single-valued fact is written again with a different object, only the
   older memory is penalized as contradicted; the newer one supersedes it and

@@ -109,6 +109,92 @@ of the prompt.
 
 ---
 
+## Answering from memory (unreleased, on `main`)
+
+Three steps turn stored memories into an answer: recall what fits a token
+budget, lay it out in date order, and wrap it in a prompt that tells the
+model how to use it.
+
+```python
+from datetime import UTC, datetime
+from myelin import MemoryClient, build_answer_prompt, format_context
+
+client = MemoryClient(user_id="scott")
+
+# Load history at the time it happened (one transaction, one embedding call).
+client.add_many([
+    {"content": "Scott moved to Berlin.",
+     "t_valid": datetime(2025, 3, 2, tzinfo=UTC),
+     "metadata": {"session_id": "s1", "turn": 0}},
+    {"content": "Scott is back in Paris for good.",
+     "t_valid": datetime(2025, 9, 14, tzinfo=UTC),
+     "metadata": {"session_id": "s2", "turn": 0}},
+])
+
+question = "Where does Scott live now?"
+hits = client.recall(question, token_budget=6000)   # as many top hits as fit
+prompt = build_answer_prompt(format_context(hits), question)
+answer = your_llm(prompt)                           # bring your own model
+```
+
+Without an embedder, search is lexical: a question finds memories that
+share words with it (here, "Scott"). Add an embedder, below, to match on
+meaning as well.
+
+- **`recall`** ranks with BM25 over a SQLite full-text index and returns
+  the best results that fit `token_budget`. Long memories count as an
+  excerpt of the passages that bear on the question (`result.excerpt`),
+  except the three best-ranked, which stay whole. Stored memories are never
+  altered.
+- **`format_context`** renders results oldest first under date headings.
+- **`build_answer_prompt`** adds rules for the cases models get wrong:
+  facts that changed (the latest wins), totals and orderings, dates stated
+  relative to a conversation, requests for advice, and questions the
+  history does not cover. `style="reasoned"` (default) asks for brief notes
+  and a final `Answer:` line; `style="direct"` asks for the answer only.
+
+### Hybrid search
+
+Add an embedding channel beside BM25 by passing an embedder. The core
+package stays dependency-free; the bundled embedder is a CPU-only static
+model behind an extra.
+
+```bash
+pip install "myelin-ai[static]"
+```
+
+```python
+from myelin import MemoryClient
+from myelin.embedders import StaticEmbedder
+
+client = MemoryClient(db_path="memory.db", embedder=StaticEmbedder())
+client.backfill_embeddings()    # embed memories written before this
+```
+
+Any object with `encode(text) -> sequence of floats` (and optionally
+`encode_batch(texts)`) works in place of `StaticEmbedder`. If the embedder
+raises, writes and searches carry on lexically.
+
+### Measured on LongMemEval-S
+
+All 500 questions, judged by `gpt-4o` with the benchmark's own prompts, one
+run each (one standard error is about 1.7 points). Reproduce with
+`python -m bench.longmemeval`; see [`bench/README.md`](bench/README.md).
+
+| Setup | `gpt-4o-mini` answering | `gpt-4o` answering |
+|---|---:|---:|
+| 1.4.0 search, top 10, plain prompt | 60.4 | not run |
+| BM25 + budget + excerpts, plain prompt | 64.8 | not run |
+| + `build_answer_prompt` | 77.2 | 82.8 |
+| + hybrid search (`StaticEmbedder`) | 78.0 | 87.4 |
+| Perfect retrieval (control) | 79.4 | 93.6 |
+
+These are not comparable with scores published by other systems beyond
+orientation: harnesses, prompts and answer models differ. Full tables,
+controls and caveats are in [`bench/results/`](bench/results/).
+
+---
+
 ## Memory-aware agent (`OrchestratedAgent`, v1.3)
 
 A provider-agnostic multi-step agent. A cheap classifier (`gpt-4o-mini` by
@@ -293,6 +379,13 @@ Contradiction-dominance invariant: a poisoned memory with 100 correct cites
 still quarantines on a single contradiction (asserted at `constants.py`
 import time).
 
+On `main` (unreleased), cites also nudge ranking: among memories relevant to
+a query, those cited mostly in correct answers move up and those cited in
+incorrect ones move down. Uncited memories keep their position, feedback
+never pulls in a memory the query did not match, and one cite has little
+effect (full strength at five). Pass `MemoryClient(cite_ranking=False)` to
+use cites for forgetting only. This has not been measured on a benchmark.
+
 ---
 
 ## HTTP sidecar + `/metrics` (1.3 + 1.4)
@@ -396,7 +489,8 @@ pytest tests/
 ```
 
 All tests are stdlib + pytest only — no internet, no GPU, no LLM calls.
-Dream-synthesis tests use trivial mock LLMs.
+Dream-synthesis tests use trivial mock LLMs. The suite runs on every pull
+request (Python 3.11 and 3.13).
 
 ---
 
