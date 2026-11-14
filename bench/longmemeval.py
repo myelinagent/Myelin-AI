@@ -280,6 +280,7 @@ def answer_one(
     max_turn_tokens: int = 0,
     prompt_style: str = "reasoned",
     whole_turns: int = 0,
+    max_answer_tokens: int = 800,
 ) -> dict[str, Any]:
     all_turns = history_turns(entry)
     gold = list(entry["answer_session_ids"])
@@ -337,7 +338,7 @@ def answer_one(
         prompt = build_answer_prompt(
             history, entry["question"], now=entry["question_date"], style=prompt_style
         )
-    completion = answerer.complete(prompt, max_tokens=800)
+    completion = answerer.complete(prompt, max_tokens=max_answer_tokens)
     row.update(
         hypothesis=final_answer(completion.text),
         response=completion.text,
@@ -386,6 +387,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "max_turn_tokens": args.max_turn_tokens,
         "whole_turns": args.whole_turns,
         "embedder": args.embedder,
+        "max_answer_tokens": args.max_answer_tokens,
         "answerer": args.answerer,
         "judge": args.judge,
         "prompt_version": PROMPT_VERSIONS[args.prompt],
@@ -429,7 +431,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 answer_one(
                     e, args.system, args.top_k, answerer,
                     args.token_budget, args.max_turn_tokens, args.prompt,
-                    args.whole_turns,
+                    args.whole_turns, args.max_answer_tokens,
                 )
             )
         )
@@ -658,6 +660,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--embedder", default="",
         help="static embedding model for hybrid search, e.g. minishlab/potion-retrieval-32M",
+    )
+    run.add_argument(
+        "--max-answer-tokens", type=int, default=800,
+        help="output cap for the answerer; raise it for models that spend "
+        "output tokens on hidden reasoning",
     )
     run.add_argument("--limit", type=int, default=0, help="only the first N questions")
     run.add_argument("--workers", type=int, default=8)
