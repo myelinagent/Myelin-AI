@@ -151,3 +151,23 @@ def test_cite_feedback_model_arm_uses_what_the_model_names(tmp_path, monkeypatch
             return type("Completion", (), {"text": "No idea."})()
 
     assert cite_feedback.named_by_model(Silent(), "q", ["a"]) is None
+
+
+def test_lifetime_benchmark_replays_a_conversation_in_time_order(tmp_path, capsys):
+    from bench import lifetime
+
+    static = lifetime.replay(SAMPLE, seed=0, decay=False, feedback=False)
+    assert static["stored"] == 3 and static["searchable"] == 3
+    assert len(static["outcomes"]) == 2
+    assert not any(o["hidden"] for o in static["outcomes"])
+    both = lifetime.replay(SAMPLE, seed=0, decay=True, feedback=True)
+    assert both["stored"] == 3 and len(both["outcomes"]) == 2
+    summary = lifetime.summarize([static])
+    assert summary["questions"] == 2 and summary["searchable"] == 100.0
+
+    data = tmp_path / "locomo.json"
+    data.write_text(json.dumps([SAMPLE]))
+    assert lifetime.main(["--data", str(data), "--seeds", "1"]) == 0
+    out = capsys.readouterr().out
+    for arm in lifetime.ARMS:
+        assert f"| {arm} |" in out

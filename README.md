@@ -212,6 +212,7 @@ have differed by up to 3.4 points. Reproduce with
 | + hybrid search (`StaticEmbedder`) | 78.0 | 87.4 | 89.0 (89.2, 88.8) |
 | + 100-token excerpts (the `recall()` default since) | not run | not run | 90.3 (90.2, 90.4) |
 | + excerpts that fill their budget around the match | not run | not run | 91.3 (93.0, 89.6, 91.4, 91.0) |
+| + two-part fusion: the code on `main` | not run | 88.6 | 90.1 (90.2, 91.0, 89.4, 89.8) |
 | Perfect retrieval (control) | 79.4 | 93.6 | 93.4 |
 
 These are not comparable with scores published by other systems beyond
@@ -230,6 +231,7 @@ LoCoMo scores use. One run each. Reproduce with `python -m bench.locomo`.
 | single-hop / multi-hop | 88.6 / 77.7 | 93.2 / 84.8 |
 | temporal / open-domain | 59.8 / 58.3 | 86.6 / 71.9 |
 | **+ facts extracted at write time** (`myelin.enrich`), overall | 82.4 | **91.9** |
+| the same, on `main` after the later retrieval changes | not run | **92.6** |
 | + those facts also shown to the answerer, overall | 83.6 | 91.3 |
 
 Fact extraction is opt-in and costs one model call per conversation. It
