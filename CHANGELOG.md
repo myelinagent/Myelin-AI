@@ -67,6 +67,9 @@ Stability pass: crash, stall and data-loss paths found in a whole-repo review.
 
 ### Added
 
+- **Sidecar endpoints** `/tools/memory_recall` (budgeted matches plus the
+  text for a prompt), `/tools/memory_store_many` and
+  `/tools/memory_cite_used`.
 - **`MemoryClient.cite_used(results, used)`** records which of the shown
   memories an answer relied on. Used ones are cited as useful; the rest
   are counted as shown but not used (`Memory.shown_unused_count`), which

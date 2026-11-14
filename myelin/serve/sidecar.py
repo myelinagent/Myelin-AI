@@ -22,7 +22,8 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from typing import Any
 
-from myelin import MemoryClient
+from myelin import MemoryClient, format_context
+from myelin.types import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,68 @@ def tool_memory_store(payload: dict) -> Any:
     return {"memory": _to_jsonable(mem)}
 
 
+def _when(value: Any) -> datetime | None:
+    """An ISO-8601 timestamp from a payload, or None when absent."""
+    return datetime.fromisoformat(value) if value else None
+
+
+def tool_memory_store_many(payload: dict) -> Any:
+    """Store several memories in one transaction.
+
+    Payload: {"items": [str | {"content", "metadata"?, "t_valid"?,
+    "index_text"?, "confidence"?, "importance"?}], "user_id"?: str}
+    """
+    items = []
+    for item in payload["items"]:
+        record = {"content": item} if isinstance(item, str) else dict(item)
+        if record.get("t_valid"):
+            record["t_valid"] = _when(record["t_valid"])
+        items.append(record)
+    stored = _get_client().add_many(
+        items, user_id=payload.get("user_id") or _DEFAULT_USER_ID
+    )
+    return {"memories": _to_jsonable(stored)}
+
+
+def tool_memory_recall(payload: dict) -> Any:
+    """As many of the best matches as fit a token budget, with the text
+    to put in a prompt.
+
+    Payload: {"query": str, "user_id"?, "token_budget"?: int,
+    "max_result_tokens"?: int, "numbered"?: bool}
+    Returns: {"hits": [...], "context": str}. With "numbered", each
+    memory in the context is prefixed with its position in "hits" from
+    1, for /tools/memory_cite_used.
+    """
+    hits = _get_client().recall(
+        payload["query"],
+        user_id=payload.get("user_id") or _DEFAULT_USER_ID,
+        token_budget=int(payload.get("token_budget", 6000)),
+        max_result_tokens=int(payload.get("max_result_tokens", 100)),
+    )
+    context = format_context(hits, numbered=bool(payload.get("numbered", False)))
+    return {"hits": _to_jsonable(hits), "context": context}
+
+
+def tool_memory_cite_used(payload: dict) -> Any:
+    """Report which of the memories shown for a question the answer used.
+
+    Payload: {"shown": [memory_id, ...], "used": [memory_id | position
+    from 1, ...], "query"?: str}
+    Returns: {"used": n, "unused": m, "enabled": bool}; "enabled" is
+    false when cite learning is off (MYELIN_CITE_LEARNING != "1").
+    """
+    client = _get_client()
+    shown = []
+    for memory_id in payload["shown"]:
+        memory = client.get(memory_id)
+        if memory is None:
+            raise _NotFoundError(f"memory {memory_id!r} not found")
+        shown.append(SearchResult(memory=memory, score=0.0))
+    counts = client.cite_used(shown, payload.get("used") or [], query=payload.get("query"))
+    return {**counts, "enabled": bool(client.cite_telemetry["cite_learning_enabled"])}
+
+
 def tool_memory_update(payload: dict) -> Any:
     client = _get_client()
     memory_id = payload["memory_id"]
@@ -227,6 +290,9 @@ _ROUTES = {
     "/tools/memory_search": tool_memory_search,
     "/tools/memory_get": tool_memory_get,
     "/tools/memory_store": tool_memory_store,
+    "/tools/memory_store_many": tool_memory_store_many,
+    "/tools/memory_recall": tool_memory_recall,
+    "/tools/memory_cite_used": tool_memory_cite_used,
     "/tools/memory_update": tool_memory_update,
     "/tools/memory_forget": tool_memory_forget,
     "/tools/memory_consolidate": tool_memory_consolidate,
