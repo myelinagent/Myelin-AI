@@ -199,8 +199,9 @@ made no measurable difference (tables below).
 
 ### Measured on LongMemEval-S
 
-All 500 questions, judged by `gpt-4o` with the benchmark's own prompts, one
-run each (one standard error is about 1.7 points). Reproduce with
+All 500 questions, judged by `gpt-4o` with the benchmark's own prompts. One
+run each unless several scores are listed; identical runs with `gpt-5-mini`
+have differed by up to 3.4 points. Reproduce with
 `python -m bench.longmemeval`; see [`bench/README.md`](bench/README.md).
 
 | Setup | `gpt-4o-mini` answering | `gpt-4o` answering | `gpt-5-mini` answering |
@@ -210,6 +211,7 @@ run each (one standard error is about 1.7 points). Reproduce with
 | + `build_answer_prompt` | 77.2 | 82.8 | not run |
 | + hybrid search (`StaticEmbedder`) | 78.0 | 87.4 | 89.0 (89.2, 88.8) |
 | + 100-token excerpts (the `recall()` default since) | not run | not run | 90.3 (90.2, 90.4) |
+| + excerpts that fill their budget around the match | not run | not run | 91.3 (93.0, 89.6, 91.4, 91.0) |
 | Perfect retrieval (control) | 79.4 | 93.6 | 93.4 |
 
 These are not comparable with scores published by other systems beyond

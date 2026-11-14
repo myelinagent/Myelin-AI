@@ -34,6 +34,31 @@ evidence typically ranked just below the cut.
   instead of three did not recover it.
 - On LoCoMo the change makes no difference (utterances are short).
 
+## Excerpts that fill their budget
+
+Looking at the questions lost at 100 tokens: a 114-token reply was cut
+to 17 tokens, dropping the list that held the answer. `excerpt()` now
+keeps a text up to 1.5 times the limit whole, and grows outward from the
+matching passages until its budget is used.
+
+| | Run 1 | Run 2 | Run 3 | Run 4 | Mean | Before (2 runs) |
+|---|---:|---:|---:|---:|---:|---:|
+| **Accuracy (overall)** | 93.0 | 89.6 | 91.4 | 91.0 | **91.3** | 90.3 |
+| single-session-user | 98.6 | 95.7 | 94.3 | 97.1 | 96.4 | 94.3 |
+| single-session-assistant | 96.4 | 94.6 | 96.4 | 96.4 | 96.0 | 93.8 |
+| single-session-preference | 93.3 | 76.7 | 86.7 | 83.3 | 85.0 | 88.4 |
+| multi-session | 85.0 | 79.7 | 82.0 | 81.2 | 82.0 | 80.9 |
+| temporal-reasoning | 93.2 | 94.7 | 95.5 | 94.7 | 94.5 | 94.7 |
+| knowledge-update | 98.7 | 93.6 | 96.2 | 94.9 | 95.9 | 93.6 |
+
+All evidence turns are in context for 96.4% of questions (97.0 before:
+slightly fewer turns fit, 70 against 75).
+
+Four identical runs span 89.6 to 93.0. The answering model is not
+deterministic at temperature 0, and the 30 preference questions alone
+moved between 76.7 and 93.3. Read differences of a point or two between
+single runs as noise; the top run should not be quoted on its own.
+
 ## Multi-session questions
 
 The remaining gap to perfect retrieval is here: 80% against 86.5%, with
