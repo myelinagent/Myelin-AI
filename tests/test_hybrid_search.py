@@ -272,7 +272,9 @@ def test_hybrid_results_come_back_in_decreasing_score_order():
                 for i in range(80)
             ]
         )
-        hits = backend.search("tea travel", "u", 60, query_vector=[1.0] + [0.0] * 7)
+        hits = backend.search(
+            query="tea travel", user_id="u", top_k=60, query_vector=[1.0] + [0.0] * 7
+        )
         scores = [h.score for h in hits]
         assert len(hits) == 60
         assert scores == sorted(scores, reverse=True)
