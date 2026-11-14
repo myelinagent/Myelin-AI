@@ -30,6 +30,8 @@ class Turn:
     content: str
     # Marked by the benchmark as containing the answer.
     evidence: bool = False
+    # Facts extracted from this turn at write time (see myelin.enrich).
+    facts: tuple[str, ...] = ()
 
     @property
     def text(self) -> str:
@@ -70,6 +72,7 @@ class MyelinSystem:
                 "content": turn.text,
                 "t_valid": turn.session_date,
                 "metadata": {"session_id": turn.session_id, "turn": turn.index},
+                "index_text": " ".join(turn.facts),
             }
             for turn in turns
         )

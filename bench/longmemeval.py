@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from bench.llm import ChatClient, LLMError
+from bench.extract_facts import load_cache, session_key
 from bench.systems import SYSTEMS, Turn
 from myelin.context import estimate_tokens, excerpt
 from myelin.prompts import ANSWER_STYLES, build_answer_prompt
@@ -141,6 +142,15 @@ def parse_date(text: str) -> datetime:
     return datetime.strptime(f"{day} {clock}", "%Y/%m/%d %H:%M").replace(tzinfo=UTC)
 
 
+# With ``--show-facts``, a turn's extracted facts are printed under it in
+# the answerer's context, so resolved dates are visible to the reader.
+SHOW_FACTS = False
+
+# Facts extracted per session by ``python -m bench.extract_facts``, keyed
+# by session; filled by ``--facts``.
+FACTS: dict[str, dict[int, list[str]]] = {}
+
+
 def history_turns(entry: dict[str, Any]) -> list[Turn]:
     turns: list[Turn] = []
     for session_id, date, session in zip(
@@ -150,11 +160,13 @@ def history_turns(entry: dict[str, Any]) -> list[Turn]:
         strict=True,
     ):
         when = parse_date(date)
+        facts = FACTS.get(session_key(date, session), {}) if FACTS else {}
         for index, turn in enumerate(session):
             turns.append(
                 Turn(
                     session_id, when, index, turn["role"], turn["content"],
                     evidence=bool(turn.get("has_answer")),
+                    facts=tuple(facts.get(index, ())),
                 )
             )
     return turns
@@ -170,7 +182,7 @@ def render_history(turns: list[Turn]) -> str:
     for number, session in enumerate(sessions, start=1):
         session.sort(key=lambda t: t.index)
         date = session[0].session_date.strftime("%Y/%m/%d (%a) %H:%M")
-        lines = "\n".join(t.text for t in session)
+        lines = "\n".join(_shown(t) for t in session)
         blocks.append(f"### Session {number} — {date}\n{lines}")
     return "\n\n".join(blocks) if blocks else "(no relevant history found)"
 
@@ -205,6 +217,12 @@ def within_budget(
         kept.append(turn)
         used += cost
     return kept
+
+
+def _shown(turn: Turn) -> str:
+    if SHOW_FACTS and turn.facts:
+        return f"{turn.text}\n  (noted: {' '.join(turn.facts)})"
+    return turn.text
 
 
 def session_recall(ranked_sessions: list[str], gold: list[str]) -> dict[str, float]:
@@ -387,6 +405,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         "max_turn_tokens": args.max_turn_tokens,
         "whole_turns": args.whole_turns,
         "embedder": args.embedder,
+        "facts": Path(args.facts).name if args.facts else "",
+        "show_facts": args.show_facts,
         "max_answer_tokens": args.max_answer_tokens,
         "answerer": args.answerer,
         "judge": args.judge,
@@ -400,7 +420,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         previous = json.loads(manifest_path.read_text())
         pinned = (
             "data_sha256", "system", "top_k", "token_budget", "max_turn_tokens",
-            "whole_turns", "embedder", "answerer", "prompt_version",
+            "whole_turns", "embedder", "facts", "show_facts", "answerer",
+            "prompt_version",
         )
         changed = [k for k in pinned if (previous.get(k) or 0) != (manifest[k] or 0)]
         if changed:
@@ -412,6 +433,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             return 2
         manifest["started_at"] = previous.get("started_at", manifest["started_at"])
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    if args.facts:
+        FACTS.update(load_cache(Path(args.facts)))
+        if not FACTS:
+            print(f"--facts {args.facts}: no facts found", file=sys.stderr)
+            return 2
+    global SHOW_FACTS
+    SHOW_FACTS = bool(args.show_facts)
 
     if args.embedder:
         if args.system != "myelin":
@@ -665,6 +694,14 @@ def main(argv: list[str] | None = None) -> int:
         "--max-answer-tokens", type=int, default=800,
         help="output cap for the answerer; raise it for models that spend "
         "output tokens on hidden reasoning",
+    )
+    run.add_argument(
+        "--facts", default="",
+        help="cache from `python -m bench.extract_facts`; facts are indexed with each turn",
+    )
+    run.add_argument(
+        "--show-facts", action="store_true",
+        help="with --facts: also print a turn's facts under it in the answerer's context",
     )
     run.add_argument("--limit", type=int, default=0, help="only the first N questions")
     run.add_argument("--workers", type=int, default=8)

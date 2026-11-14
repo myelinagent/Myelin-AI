@@ -220,6 +220,12 @@ def _unit_vector_bytes(vector: Sequence[float]) -> bytes:
     return array("f", (x / norm for x in values)).tobytes()
 
 
+def _indexed(content: str, index_text: str) -> str:
+    """The text a memory is searched by: its content plus any extra
+    index text."""
+    return f"{content}\n{index_text}" if index_text else content
+
+
 def _dt_to_iso(dt: datetime | None) -> str | None:
     if dt is None:
         return None
@@ -291,6 +297,11 @@ class SqliteBackend:
                         f"ALTER TABLE tombstones ADD COLUMN {col_sql}"
                     )
 
+            if "index_text" not in self._column_names("memories"):
+                cursor.execute(
+                    "ALTER TABLE memories ADD COLUMN index_text TEXT NOT NULL DEFAULT ''"
+                )
+
             cursor.executescript(_SCHEMA_V1_2_NEW_TABLES)
             cursor.executescript(_VECTOR_SCHEMA)
             self._conn.commit()
@@ -316,7 +327,8 @@ class SqliteBackend:
             cursor.execute("DELETE FROM memories_fts_rows")
             cursor.execute(
                 "INSERT INTO memories_fts (rowid, content, user_id) "
-                "SELECT rowid, content, user_id FROM memories"
+                "SELECT rowid, content || char(10) || index_text, user_id "
+                "FROM memories"
             )
             cursor.execute(
                 "INSERT INTO memories_fts_rows (memory_id, fts_rowid) "
@@ -347,6 +359,7 @@ class SqliteBackend:
         confidence: float = 0.5,
         importance: float = 0.5,
         vector: Sequence[float] | None = None,
+        index_text: str = "",
     ) -> Memory:
         vector_blob = _unit_vector_bytes(vector) if vector is not None else None
         if t_valid is None:
@@ -365,8 +378,8 @@ class SqliteBackend:
                 """INSERT INTO memories
                    (id, user_id, content, metadata_json, event_id,
                     t_valid, t_invalid, confidence, importance,
-                    health_state, quarantine_entered_at)
-                   VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'healthy', NULL)""",
+                    health_state, quarantine_entered_at, index_text)
+                   VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'healthy', NULL, ?)""",
                 (
                     mem_id,
                     user_id,
@@ -376,12 +389,13 @@ class SqliteBackend:
                     _dt_to_iso(t_valid),
                     confidence,
                     importance,
+                    index_text,
                 ),
             )
             if self._fts:
                 cur.execute(
                     "INSERT INTO memories_fts (content, user_id) VALUES (?, ?)",
-                    (content, user_id),
+                    (_indexed(content, index_text), user_id),
                 )
                 cur.execute(
                     "INSERT INTO memories_fts_rows (memory_id, fts_rowid) "
@@ -403,6 +417,7 @@ class SqliteBackend:
             confidence=confidence,
             importance=importance,
             health_state="healthy",
+            index_text=index_text,
         )
 
     def add_memories(self, records: Sequence[Mapping[str, Any]]) -> list[Memory]:
@@ -731,11 +746,7 @@ class SqliteBackend:
                 (new_content, json.dumps(new_meta), memory_id),
             )
             if self._fts and new_content != existing.content:
-                cur.execute(
-                    "UPDATE memories_fts SET content = ? WHERE rowid = "
-                    "(SELECT fts_rowid FROM memories_fts_rows WHERE memory_id = ?)",
-                    (new_content, memory_id),
-                )
+                self._reindex(cur, memory_id, new_content, existing.index_text)
             self._conn.commit()
             existing.content = new_content
             existing.metadata = new_meta
@@ -986,6 +997,34 @@ class SqliteBackend:
 
     # ---- internals ----------------------------------------------
 
+    def set_index_text(self, memory_id: str, index_text: str) -> bool:
+        """Replace the extra text a live memory is findable by. Returns
+        False for an unknown or tombstoned id."""
+        with self._lock:
+            cur = self._conn.cursor()
+            row = cur.execute(
+                "SELECT content FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            cur.execute(
+                "UPDATE memories SET index_text = ? WHERE id = ?",
+                (index_text, memory_id),
+            )
+            if self._fts:
+                self._reindex(cur, memory_id, row[0], index_text)
+            self._conn.commit()
+            return True
+
+    def _reindex(
+        self, cur: sqlite3.Cursor, memory_id: str, content: str, index_text: str
+    ) -> None:
+        cur.execute(
+            "UPDATE memories_fts SET content = ? WHERE rowid = "
+            "(SELECT fts_rowid FROM memories_fts_rows WHERE memory_id = ?)",
+            (_indexed(content, index_text), memory_id),
+        )
+
     def _unindex(self, cur: sqlite3.Cursor, memory_id: str) -> None:
         """Drop a memory from the full-text index (it left ``memories``)."""
         if self._fts:
@@ -1047,7 +1086,7 @@ class SqliteBackend:
             return out
 
     def _score(self, mem: Memory, q_tokens: set[str]) -> float:
-        c_tokens = _tokens(mem.content)
+        c_tokens = _tokens(_indexed(mem.content, mem.index_text))
         overlap = len(c_tokens & q_tokens)
         if overlap == 0:
             return 0.0
@@ -1122,4 +1161,5 @@ class SqliteBackend:
             cite_correct_count=int(row.get("cite_correct_count") or 0),
             cite_incorrect_count=int(row.get("cite_incorrect_count") or 0),
             last_cited_at=_iso_to_dt(row.get("last_cited_at")),
+            index_text=row.get("index_text") or "",
         )
