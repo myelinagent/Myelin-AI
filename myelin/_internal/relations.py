@@ -59,6 +59,35 @@ def _conversation_order(memories: Sequence[Memory]) -> dict[str, list[Memory]]:
     }
 
 
+def _most_similar(
+    source: str, ids: Sequence[str], vectors: Mapping[str, Any]
+) -> list[tuple[str, float]]:
+    """The memories most like ``source`` by cosine similarity (vectors
+    are unit length), at least ``MIN_SIMILARITY`` alike."""
+    try:
+        import numpy as np
+    except ImportError:
+        target = vectors[source]
+        scored = [
+            (sum(a * b for a, b in zip(vectors[i], target, strict=True)), i)
+            for i in ids
+            if i != source
+        ]
+    else:
+        matrix = np.asarray([vectors[i] for i in ids], dtype=np.float32)
+        scores = matrix @ np.asarray(vectors[source], dtype=np.float32)
+        # Only the best few matter; do not sort a large store in full.
+        keep = min(len(ids), SIMILAR_NEIGHBOURS + 1)
+        best = np.argpartition(-scores, keep - 1)[:keep].tolist()
+        scored = [(float(scores[row]), ids[row]) for row in best if ids[row] != source]
+    scored.sort(key=lambda pair: (-pair[0], pair[1]))
+    return [
+        (memory_id, score)
+        for score, memory_id in scored[:SIMILAR_NEIGHBOURS]
+        if score >= MIN_SIMILARITY
+    ]
+
+
 def neighbour_support(
     memories: Sequence[Memory],
     vectors: Mapping[str, Any] | None = None,
@@ -87,25 +116,12 @@ def neighbour_support(
     if vectors:
         ids = [m.id for m in memories if m.id in vectors]
         if len(ids) > 1:
-            try:
-                import numpy as np
-            except ImportError:  # similarity edges need numpy
-                np = None  # type: ignore[assignment]
-            if np is not None:
-                matrix = np.asarray([vectors[i] for i in ids], dtype=np.float32)
-                row_of = {memory_id: row for row, memory_id in enumerate(ids)}
-                for source in used:
-                    row = row_of.get(source.id)
-                    if row is None:
-                        continue
-                    scores = matrix @ matrix[row]
-                    scores[row] = -1.0
-                    count = min(SIMILAR_NEIGHBOURS, len(ids) - 1)
-                    nearest = np.argpartition(-scores, count - 1)[:count]
-                    strength = _use(source)
-                    for neighbour in nearest.tolist():
-                        if scores[neighbour] >= MIN_SIMILARITY:
-                            support[ids[neighbour]] += strength * float(scores[neighbour])
+            for source in used:
+                if source.id not in vectors:
+                    continue
+                strength = _use(source)
+                for neighbour, similarity in _most_similar(source.id, ids, vectors):
+                    support[neighbour] += strength * similarity
     return dict(support)
 
 
