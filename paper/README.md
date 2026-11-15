@@ -2,8 +2,8 @@
 
 Two drafts for arXiv that cite each other.
 
-- `main.tex` / `main.pdf` (10 pages): the memory-over-time evaluation
-  protocol and the case for longitudinal benchmarks of agent memory.
+- `main.tex` / `main.pdf` (11 pages): LongHAUL, the memory-over-time
+  evaluation protocol, and the case for longitudinal benchmarks of agent memory.
 - `myelin.tex` / `myelin.pdf` (8 pages): the system itself, its design,
   interface, benchmark results, cost, and where it fails. Its numbers
   come from the same result files listed below, plus the write
@@ -42,7 +42,10 @@ Every table can be regenerated with the commands in `bench/README.md`.
 - [ ] The system paper cites the benchmark paper as "in preparation";
       replace with its arXiv identifier once it has one, and cite the
       system paper from the benchmark paper likewise.
-- [ ] The protocol has no name yet; the code calls it `bench.lifetime`.
+- [x] The protocol is named LongHAUL (Long-horizon Assessment of Use and
+      Loss); the code runs it as `bench.lifetime`. A web search on
+      2026-11-15 found no other benchmark with that name; search again
+      before submitting.
 - [ ] `refs.bib` was checked against primary sources on 2026-11-14.
       Two details are still to confirm by hand (noted at the top of the
       file): the BM25 survey's volume and pages, and the exact title of

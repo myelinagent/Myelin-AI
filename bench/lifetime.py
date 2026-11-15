@@ -1,4 +1,6 @@
-"""Memory over time: what forgetting and cite feedback do as a store ages.
+"""LongHAUL (Long-horizon Assessment of Use and Loss): memory over time.
+
+What forgetting and cite feedback do as a store ages.
 
     python -m bench.lifetime --data locomo10.json --embedder minishlab/potion-retrieval-32M
 

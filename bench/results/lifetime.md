@@ -1,4 +1,7 @@
-# Memory over time: forgetting and cite feedback
+# LongHAUL: memory over time, forgetting and cite feedback
+
+LongHAUL (Long-horizon Assessment of Use and Loss) is the name of this
+protocol: what a memory gains from being used, and what forgetting loses.
 
 `python -m bench.lifetime`. Each LoCoMo conversation (ten of them, 19
 to 32 sessions over several months) is replayed on a simulated clock:

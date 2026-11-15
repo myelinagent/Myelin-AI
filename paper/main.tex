@@ -1,5 +1,5 @@
 % DRAFT. Every number comes from bench/results/*.md in this repository;
-% see paper/README.md for the mapping. The benchmark's name is a placeholder.
+% see paper/README.md for the mapping.
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage[T1]{fontenc}
@@ -11,7 +11,7 @@
 \usepackage{enumitem}
 \setlist{nosep}
 
-\title{Memory That Ages: A Longitudinal Benchmark for Agent Memory,\\
+\title{Memory That Ages: LongHAUL, a Longitudinal Benchmark\\ for Agent Memory,
 and What It Shows That Static Benchmarks Cannot}
 \author{Scott Benson\\Apex Insights}
 \date{DRAFT --- November 2026}
@@ -25,15 +25,16 @@ benchmarks that load a fixed history and ask each question once. A
 memory that lives with an agent for months does three things those
 benchmarks cannot observe: it forgets, it learns from use which
 memories matter, and it is asked about the same facts again. We
-describe a small open-source memory system, Myelin, and a longitudinal
-evaluation protocol that replays long conversations on a simulated
+describe a small open-source memory system, Myelin, and LongHAUL
+(Long-horizon Assessment of Use and Loss), a longitudinal evaluation
+protocol that replays long conversations on a simulated
 clock, asks each question some sessions after its evidence and
 optionally again later, and scores retrieval without any language
 model. On two standard benchmarks Myelin scores 90.1\% (LongMemEval-S,
 \texttt{gpt-5-mini}, mean of four runs) and 92.6\% (LoCoMo), in the
 range that published systems report; several mechanisms we added moved
 those scores by less than their run-to-run spread. Under the
-longitudinal protocol the same mechanisms separate clearly. Feedback
+LongHAUL the same mechanisms separate clearly. Feedback
 about which retrieved memories an answer used raises the share of
 questions with all evidence in the top five results from 46.3\% to
 52.7\%, and from 44.1\% to 53.7\% when questions are revisited.
@@ -80,7 +81,10 @@ combines age, use and relationships between memories. None of these
 could move a LongMemEval or LoCoMo score, by construction, and the
 changes that could move it did so by amounts close to the difference
 between two runs of an identical configuration. We therefore built a
-protocol in which time passes, and report here what it shows.
+protocol in which time passes, LongHAUL (Long-horizon Assessment of Use
+and Loss), and report here what it shows. The name states what it
+measures: what a memory gains from being used, and what forgetting
+loses.
 
 Our contributions are:
 \begin{itemize}
@@ -203,7 +207,7 @@ quarantines memories whose grade is below a threshold. Quarantined
 memories leave search and stay in the store; they return if their
 grade recovers, and are deleted only on explicit request.
 
-\section{A longitudinal protocol}
+\section{LongHAUL: a longitudinal protocol}
 \label{sec:protocol}
 
 The protocol needs a dataset in which (i) content is dated over a long
@@ -327,7 +331,7 @@ list that improved LoCoMo's top-ten evidence by twelve points left
 accuracy within noise, because a 6{,}000-token context held the same
 evidence either way.
 
-\section{Results under the longitudinal protocol}
+\section{Results under LongHAUL}
 \label{sec:results}
 
 All figures are means over three random question schedules on all ten
@@ -355,7 +359,7 @@ Feedback & 51.1 & 58.9 & 62.8 & 0.0 & 100.0 \\
 Decay + feedback & 51.0 & 58.8 & 63.5 & 4.0 & 85.0 \\
 \bottomrule
 \end{tabular}
-\caption{Longitudinal protocol, each question asked once (\%).}
+\caption{LongHAUL on LoCoMo, each question asked once (\%).}
 \label{tab:once}
 \end{table}
 
@@ -373,7 +377,7 @@ Feedback & 53.7 & 59.5 & 0.0 & 100.0 \\
 Decay + feedback & 53.8 & 59.6 & 2.0 & 89.6 \\
 \bottomrule
 \end{tabular}
-\caption{Longitudinal protocol with two revisits: figures for repeat
+\caption{LongHAUL on LoCoMo with two revisits: figures for repeat
 askings only (\%).}
 \label{tab:revisit}
 \end{table}
@@ -489,7 +493,7 @@ Feedback & 70.3 & 79.0 & 86.2 & 0.0 & 100.0 \\
 Decay + feedback & 61.4 & 70.1 & 76.4 & 9.8 & 95.5 \\
 \bottomrule
 \end{tabular}
-\caption{Longitudinal protocol on LongMemEval-S, two revisits, all
+\caption{LongHAUL on LongMemEval-S, two revisits, all
 askings (\%, three schedules, no model).}
 \label{tab:lme}
 \end{table}
@@ -585,7 +589,7 @@ measure finding and reading. They are close to saturated by simple
 retrieval and a strong reader, and noisy at the top. What distinguishes
 memory systems that are meant to last (forgetting, promotion by use,
 relationships between memories) appears only when time passes and
-questions return. A protocol that replays dated conversations, lags and
+questions return. LongHAUL, a protocol that replays dated conversations, lags and
 repeats questions, and reports ranking together with what forgetting
 cost, is cheap to run, needs no model, and separated mechanisms that
 static benchmarks scored identically. It also exposed a failure of
@@ -593,7 +597,7 @@ our own forgetting that those benchmarks could not. We offer it, with a small sy
 built against it, as a starting point.
 
 \paragraph{Availability.} The library, the harnesses for LongMemEval,
-LoCoMo, cite feedback, scale and the longitudinal protocol, and every
+LoCoMo, cite feedback, scale and LongHAUL, and every
 result file cited here are in the project repository under the MIT
 licence. LoCoMo \citep{maharana2024locomo} is distributed by its authors under
 CC BY-NC 4.0 and LongMemEval \citep{wu2025longmemeval} under the MIT
