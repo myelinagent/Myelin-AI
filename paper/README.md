@@ -2,7 +2,7 @@
 
 `main.tex` is a draft for arXiv: the memory system, the memory-over-time
 evaluation protocol, and the case for longitudinal benchmarks of agent
-memory. `main.pdf` is the compiled draft (8 pages).
+memory. `main.pdf` is the compiled draft (10 pages).
 
 ## Build
 
@@ -47,6 +47,11 @@ Every table can be regenerated with the commands in `bench/README.md`.
       LongMemEval is MIT and carries no such limit.
 - [ ] Consider adding a figure of the protocol's timeline and a plot of
       needed-but-hidden against store pruned from the decay sweep.
-- [ ] The limitations section lists what a reviewer is likely to ask
-      for first: a second dataset, a model in the loop, and other
-      systems run under the same protocol.
+- [x] A second dataset (LongMemEval-S) and a model in the loop
+      (`gpt-4o-mini`) have been run; see `bench/results/lifetime.md`.
+- [ ] Other systems have not been run under the protocol. The
+      assessment in `bench/results/lifetime.md` puts a static-arm
+      comparison with Mem0, Graphiti and Letta at one to two weeks and
+      $50 to 200.
+- [ ] The model arms on LongMemEval-S are one schedule; repeat them
+      before relying on the sizes.

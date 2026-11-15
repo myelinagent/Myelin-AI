@@ -41,6 +41,12 @@ questions with all evidence in the top five results from 46.3\% to
 Age-based forgetting alone hides a memory that a later question needs
 for 8.6\% of questions (14.1\% of revisits); graded together with use
 and with the use of related memories, that falls to 2.5\% (2.0\%).
+The feedback gain is unchanged when a language model, not the evidence
+labels, says which memories were used, and it carries to a second
+dataset. The benefit of forgetting does not: on LongMemEval-S
+histories of a month or more, where each history has one question,
+age-based forgetting hides needed evidence for 11.2\% of askings and
+use cannot protect it.
 We also report what did not work, the size of the noise in
 model-judged scores, and the limits of our evidence. Code, data
 loaders and every result file are public.
@@ -205,7 +211,11 @@ The protocol needs a dataset in which (i) content is dated over a long
 period and (ii) each question is annotated with the items that answer
 it. LoCoMo has both: sessions carry dates over 166 to 293 days, and
 questions list their evidence utterances. We use its 1{,}531
-non-adversarial questions that have evidence.
+non-adversarial questions that have evidence. LongMemEval-S has both
+in a weaker form: each of its 500 entries is one question with its own
+dated history and flagged evidence turns (479 entries have any), but
+70\% of the histories span 20 days or less. We use it as a second
+dataset, each entry being a timeline with a single question.
 
 \paragraph{Replay.} For each conversation, a store is created with a
 simulated clock. Sessions are written in order, each on its date.
@@ -224,9 +234,13 @@ use of a memory can matter.
 \paragraph{Arms.} The same schedule is run four ways: \emph{static}
 (write and search only); \emph{decay} (\texttt{prune} after every
 session); \emph{feedback} (after each question, \texttt{cite\_used}
-with the question's evidence as the used set); and both.
+with the question's evidence as the used set); and both. Two optional
+arms replace the evidence labels in the feedback arms with the account
+of an answering model, which is shown the numbered top 20 results,
+answers, and names the ones it relied on.
 
-\paragraph{Measures.} No language model is involved.
+\paragraph{Measures.} No language model is involved in scoring, and
+none at all outside the two model arms.
 \begin{itemize}
 \item \emph{Evidence in the top $k$}: the share of askings for which
   every evidence item is among the first $k$ results.
@@ -390,6 +404,97 @@ falls from 8.6\% to 2.5\% (11.8\% to 4.0\%; 14.1\% to 2.0\% on
 revisits), with ranking equal to feedback alone or slightly better
 and 10 to 15\% of the store still pruned.
 
+\paragraph{A model in the loop.} Table~\ref{tab:model} repeats the
+feedback arms with \texttt{gpt-4o-mini} naming the memories it used
+(two schedules; all 12{,}248 askings returned a readable reply). The
+ranking gain is the same as with the labels, asked once or revisited.
+The model names about 1.8 memories per reply, of which 43\% are
+labelled evidence, and names 87\% of the labelled evidence it is
+shown. Because it credits more memories, decay then prunes less (7\%
+of the store against 14\%) and hides fewer needed memories (1.0\%
+against 2.5\%).
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{All evidence in} & Needed & Store still \\
+ & top 5 & top 10 & but hidden & searchable \\
+\midrule
+\multicolumn{5}{l}{\emph{Each question asked once}} \\
+Feedback, labels & 52.7 & 60.5 & 0.0 & 100.0 \\
+Feedback, model & 52.7 & 60.5 & 0.0 & 100.0 \\
+Decay + feedback, labels & 52.7 & 60.6 & 2.5 & 86.2 \\
+Decay + feedback, model & 52.9 & 60.6 & 1.0 & 93.2 \\
+\midrule
+\multicolumn{5}{l}{\emph{Two revisits, repeat askings only}} \\
+Feedback, labels & 53.4 & 59.3 & 0.0 & 100.0 \\
+Feedback, model & 53.3 & 59.0 & 0.0 & 100.0 \\
+Decay + feedback, labels & 53.4 & 59.4 & 2.0 & 89.6 \\
+Decay + feedback, model & 53.2 & 59.1 & 0.3 & 96.9 \\
+\bottomrule
+\end{tabular}
+\caption{LoCoMo with the used set taken from evidence labels or from
+\texttt{gpt-4o-mini}'s own account (\%, two schedules).}
+\label{tab:model}
+\end{table}
+
+\paragraph{A second dataset.} Table~\ref{tab:lme} gives the protocol
+on LongMemEval-S with two revisits. Feedback carries over: 4.3 points
+of top-five evidence over all entries and 6.4 on repeat askings. Decay
+does not. On most entries it is inert, since nothing is pruned in a
+history shorter than about 90 days; on the first 150 entries, none of
+which spans more than 30 days, the decay arm equals the static arm
+exactly. On the 120 entries spanning 31 days or more it costs about
+ten points at every depth and hides a needed memory for 11.2\% of
+askings while pruning only 4.5\% of the store, and feedback recovers
+little (9.8\%). The reason is structural. Each history has one
+question, so its old evidence has never been retrieved when decay
+reaches it; it is hidden before the first asking, never shown, and
+never cited. On LoCoMo, many questions per conversation share
+evidence, and use arrives in time. Use can protect only what has been
+used.
+
+Two cautions apply. Of 13 long entries that lost a needed memory in a
+decay-only replay, 12 are knowledge-update questions, whose labelled
+evidence includes the turn holding the superseded value; the measure
+counts that turn as needed although an answer may require only the
+latest value, so part of this cost may be the store forgetting what it
+should. And with \texttt{gpt-4o-mini} naming what it used (one
+schedule), feedback was weaker than with labels on this dataset:
+top-five evidence on repeat askings of 59.4\% against 61.5\% (56.5\%
+static) on the first 150 entries, and 66.8\% against 72.0\% (66.4\%
+static) on the long histories. The model named 62 to 80\% of the
+labelled evidence it was shown, against 87\% on LoCoMo. We did not
+establish why; long turns were shown to it as 200-token excerpts.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+ & \multicolumn{3}{c}{All evidence in} & Needed & Store still \\
+ & top 5 & top 10 & top 20 & but hidden & searchable \\
+\midrule
+\multicolumn{6}{l}{\emph{All 500 entries}} \\
+Static & 65.1 & 77.8 & 86.6 & 0.0 & 100.0 \\
+Decay & 62.5 & 75.3 & 83.9 & 2.7 & 98.9 \\
+Feedback & 69.4 & 81.2 & 86.6 & 0.0 & 100.0 \\
+Decay + feedback & 67.2 & 79.0 & 84.2 & 2.4 & 98.9 \\
+\midrule
+\multicolumn{6}{l}{\emph{120 entries with histories of 31 days or more}} \\
+Static & 66.7 & 75.9 & 86.2 & 0.0 & 100.0 \\
+Decay & 56.3 & 65.5 & 75.0 & 11.2 & 95.5 \\
+Feedback & 70.3 & 79.0 & 86.2 & 0.0 & 100.0 \\
+Decay + feedback & 61.4 & 70.1 & 76.4 & 9.8 & 95.5 \\
+\bottomrule
+\end{tabular}
+\caption{Longitudinal protocol on LongMemEval-S, two revisits, all
+askings (\%, three schedules, no model).}
+\label{tab:lme}
+\end{table}
+
 \paragraph{What was tried and not kept.} A mild penalty on health for
 being shown and not used pruned more (27\% of the store) and ranked a
 point better in the top 20 at the shorter lag, and hid more needed
@@ -417,7 +522,10 @@ Second, static scores cannot show harm. Forgetting has a cost, and it
 is the cost a deployed agent's user would notice: something they said
 is gone when they ask for it. Needed-but-hidden measures that directly,
 and it was large (8.6 to 14.1\%) for the simplest and most common
-design, decay by age.
+design, decay by age. It also showed where our own combined grade
+fails: on histories whose old facts are asked for once, late, and
+never before (Table~\ref{tab:lme}). We would not have found that on
+either static benchmark.
 
 Third, static scores reward what is cheap to buy elsewhere. Our
 accuracy on LongMemEval-S rose by about thirty points, of which the
@@ -434,13 +542,18 @@ properties of a trajectory. A benchmark should have one.
 \section{Limitations}
 
 \begin{itemize}
-\item \textbf{One dataset.} The longitudinal results use LoCoMo only.
-  Its conversations are social chat between two people; other domains
-  may behave differently. Revisits repeat the same wording, which is
-  easier than a paraphrase.
-\item \textbf{Oracle feedback.} The feedback arms use evidence labels.
-  A model's own account matched them in one separate test with one
-  model; we have not run the full protocol with a model in the loop.
+\item \textbf{Two datasets, neither built for this.} LoCoMo is social
+  chat between two people; LongMemEval-S histories are mostly too
+  short for forgetting to act and carry one question each. The two
+  disagree about decay, and we cannot say which is closer to real use.
+  Revisits repeat the same wording, which is easier than a paraphrase.
+\item \textbf{One model in the loop.} The model arms used one small
+  model, two schedules on LoCoMo and one on LongMemEval-S, where its
+  account was weaker than the labels for reasons we did not establish.
+\item \textbf{Evidence labels as need.} Needed-but-hidden treats every
+  labelled evidence item as required. For questions about a value that
+  changed, the label includes the superseded value, so the measure
+  can count correct forgetting as harm.
 \item \textbf{Retrieval only.} The protocol scores whether evidence is
   retrievable, not whether answers are right. Our static results
   suggest answer accuracy is too noisy at this scale to resolve the
@@ -453,7 +566,13 @@ properties of a trajectory. A benchmark should have one.
   conversations and checked on the other five of the same benchmark.
   That guards against fitting noise, not against fitting the dataset.
 \item \textbf{Comparisons.} We did not run other systems. Published
-  figures are quoted as their authors report them.
+  figures are quoted as their authors report them. From their current
+  packages and documentation, the open-source releases of Mem0,
+  Graphiti (Zep) and Letta have neither age-based forgetting nor use
+  feedback that can be driven on a simulated clock, so only the static
+  arm could be compared, with an adapter mapping returned items back
+  to source turns. We estimate that at one to two weeks and have not
+  done it.
 \item \textbf{Scale.} Stores here hold hundreds of memories. Separate
   timing on synthetic text shows retrieval latency growing linearly to
   about 45\,ms (lexical) and 83\,ms (hybrid) at 200{,}000 memories; the
@@ -470,7 +589,8 @@ relationships between memories) appears only when time passes and
 questions return. A protocol that replays dated conversations, lags and
 repeats questions, and reports ranking together with what forgetting
 cost, is cheap to run, needs no model, and separated mechanisms that
-static benchmarks scored identically. We offer it, with a small system
+static benchmarks scored identically. It also exposed a failure of
+our own forgetting that those benchmarks could not. We offer it, with a small system
 built against it, as a starting point.
 
 \paragraph{Availability.} The library, the harnesses for LongMemEval,

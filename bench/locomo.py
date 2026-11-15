@@ -77,11 +77,11 @@ First, provide a short (one sentence) explanation of your reasoning, then finish
 Do NOT include both CORRECT and WRONG in your response, or it will break the evaluation script.
 
 Just return the label CORRECT or WRONG in a json format with the key as "label".
-"""  # kept byte-for-byte as published
+"""  # the published wording, unchanged, so scores stay comparable; see THIRD_PARTY_NOTICES.md
 
 
 def parse_date(text: str) -> datetime:
-    """LoCoMo dates look like ``1:56 pm on 8 May, 2023``."""
+    """LoCoMo dates look like ``4:10 pm on 9 May, 2023``."""
     return datetime.strptime(text.strip(), "%I:%M %p on %d %B, %Y").replace(tzinfo=UTC)
 
 

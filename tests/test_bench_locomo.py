@@ -12,7 +12,7 @@ SAMPLE = {
     "conversation": {
         "speaker_a": "Ana",
         "speaker_b": "Ben",
-        "session_1_date_time": "1:56 pm on 8 May, 2023",
+        "session_1_date_time": "4:10 pm on 9 May, 2023",
         "session_1": [
             {"speaker": "Ana", "dia_id": "D1:1", "text": "I adopted a beagle named Pickle."},
             {"speaker": "Ben", "dia_id": "D1:2", "text": "Lovely!",
@@ -35,7 +35,7 @@ SAMPLE = {
 
 
 def test_parse_date():
-    assert locomo.parse_date("1:56 pm on 8 May, 2023") == datetime(2023, 5, 8, 13, 56, tzinfo=UTC)
+    assert locomo.parse_date("4:10 pm on 9 May, 2023") == datetime(2023, 5, 9, 16, 10, tzinfo=UTC)
 
 
 def test_conversation_turns_carry_dates_ids_and_captions():
@@ -246,9 +246,9 @@ def test_lifetime_model_arms_feed_back_what_the_model_names(tmp_path, capsys, mo
 LME_ENTRY = {
     "question_id": "q1",
     "question_type": "single-session-user",
-    "question": "What degree did I graduate with?",
+    "question": "Where did I qualify as a surveyor?",
     "question_date": "2023/09/01 (Fri) 10:00",
-    "answer": "Business Administration",
+    "answer": "Aberdeen",
     "answer_session_ids": ["answer_1"],
     # Out of date order on purpose, and one session id used twice.
     "haystack_session_ids": ["late", "answer_1", "late"],
@@ -258,9 +258,9 @@ LME_ENTRY = {
     "haystack_sessions": [
         [{"role": "user", "content": "Any tips for repotting a fern?"},
          {"role": "assistant", "content": "Use a pot one size larger."}],
-        [{"role": "user", "content": "I graduated with a degree in Business Administration.",
+        [{"role": "user", "content": "I qualified as a marine surveyor in Aberdeen.",
           "has_answer": True},
-         {"role": "assistant", "content": "Congratulations on graduating!"}],
+         {"role": "assistant", "content": "Congratulations on qualifying!"}],
         [{"role": "user", "content": "What is a good bread flour?"}],
     ],
 }
