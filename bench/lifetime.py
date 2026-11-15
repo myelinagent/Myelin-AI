@@ -37,7 +37,9 @@ no feedback. Endpoint and key are configured as in ``bench.llm``.
 ``--dataset longmemeval`` replays LongMemEval-S instead. There each
 entry is one question with its own dated history, so each entry is a
 timeline with a single question, and feedback can only carry from one
-asking of that question to the next (``--revisits``).
+asking of that question to the next (``--revisits``). Most of those
+histories cover under two weeks, too short for decay to act;
+``--min-span-days N`` keeps the timelines that span at least N days.
 """
 
 from __future__ import annotations
