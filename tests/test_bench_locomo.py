@@ -12,7 +12,7 @@ SAMPLE = {
     "conversation": {
         "speaker_a": "Ana",
         "speaker_b": "Ben",
-        "session_1_date_time": "1:56 pm on 8 May, 2023",
+        "session_1_date_time": "4:10 pm on 9 May, 2023",
         "session_1": [
             {"speaker": "Ana", "dia_id": "D1:1", "text": "I adopted a beagle named Pickle."},
             {"speaker": "Ben", "dia_id": "D1:2", "text": "Lovely!",
@@ -35,7 +35,7 @@ SAMPLE = {
 
 
 def test_parse_date():
-    assert locomo.parse_date("1:56 pm on 8 May, 2023") == datetime(2023, 5, 8, 13, 56, tzinfo=UTC)
+    assert locomo.parse_date("4:10 pm on 9 May, 2023") == datetime(2023, 5, 9, 16, 10, tzinfo=UTC)
 
 
 def test_conversation_turns_carry_dates_ids_and_captions():
@@ -187,3 +187,120 @@ def test_lifetime_benchmark_can_ask_each_question_again(tmp_path, capsys):
     data.write_text(json.dumps([SAMPLE]))
     assert lifetime.main(["--data", str(data), "--seeds", "1", "--revisits", "1"]) == 0
     assert "Repeat askings" in capsys.readouterr().out
+
+
+def test_lifetime_model_arms_feed_back_what_the_model_names(tmp_path, capsys, monkeypatch):
+    from bench import lifetime
+    from bench.llm import LLMError
+
+    prompts = []
+
+    class FakeClient:
+        def __init__(self, model="m"):
+            pass
+
+        def complete(self, prompt, max_tokens=0):
+            prompts.append(prompt)
+            return type("Completion", (), {"text": "It was a beagle.\nUsed: 1"})()
+
+    run = lifetime.replay(SAMPLE, seed=0, decay=True, feedback=True, model=FakeClient())
+    assert len(prompts) == len(run["outcomes"]) == 2
+    assert "[1] " in prompts[0] and "What breed is Ana's dog?" in "".join(prompts)
+    assert all(o["replied"] and o["named"] == 1 for o in run["outcomes"])
+    assert all(o["named_evidence"] <= o["evidence_shown"] for o in run["outcomes"])
+    # Without feedback the model is never asked.
+    lifetime.replay(SAMPLE, seed=0, decay=True, feedback=False, model=FakeClient())
+    assert len(prompts) == 2
+
+    cited = []
+    monkeypatch.setattr(
+        lifetime.MemoryClient, "cite_used",
+        lambda self, shown, used, query=None: cited.append(list(used)),
+    )
+    lifetime.replay(SAMPLE, seed=0, decay=False, feedback=True, model=FakeClient())
+    assert cited == [[1], [1]]  # the model's choice, not the labelled evidence
+
+    class Silent:
+        def complete(self, prompt, max_tokens=0):
+            return type("Completion", (), {"text": "No idea."})()
+
+    class Broken:
+        def complete(self, prompt, max_tokens=0):
+            raise LLMError("down")
+
+    for unusable in (Silent(), Broken()):
+        quiet = lifetime.replay(SAMPLE, seed=0, decay=False, feedback=True, model=unusable)
+        assert [o["replied"] for o in quiet["outcomes"]] == [False, False]
+    assert len(cited) == 2  # no reply, no feedback
+
+    monkeypatch.setattr(lifetime, "ChatClient", FakeClient)
+    data = tmp_path / "locomo.json"
+    data.write_text(json.dumps([SAMPLE]))
+    assert lifetime.main(["--data", str(data), "--seeds", "1", "--model", "m"]) == 0
+    captured = capsys.readouterr()
+    for arm in (*lifetime.ARMS, *lifetime.MODEL_ARMS):
+        assert f"| {arm} |" in captured.out
+    assert "askings" in captured.err
+
+
+LME_ENTRY = {
+    "question_id": "q1",
+    "question_type": "single-session-user",
+    "question": "Where did I qualify as a surveyor?",
+    "question_date": "2023/09/01 (Fri) 10:00",
+    "answer": "Aberdeen",
+    "answer_session_ids": ["answer_1"],
+    # Out of date order on purpose, and one session id used twice.
+    "haystack_session_ids": ["late", "answer_1", "late"],
+    "haystack_dates": [
+        "2023/08/20 (Sun) 09:00", "2023/05/20 (Sat) 02:21", "2023/06/11 (Sun) 18:30",
+    ],
+    "haystack_sessions": [
+        [{"role": "user", "content": "Any tips for repotting a fern?"},
+         {"role": "assistant", "content": "Use a pot one size larger."}],
+        [{"role": "user", "content": "I qualified as a marine surveyor in Aberdeen.",
+          "has_answer": True},
+         {"role": "assistant", "content": "Congratulations on qualifying!"}],
+        [{"role": "user", "content": "What is a good bread flour?"}],
+    ],
+}
+
+
+def test_lifetime_benchmark_replays_longmemeval_entries(tmp_path, capsys):
+    from bench import lifetime
+
+    sessions, ids, asked = lifetime.longmemeval_timeline(LME_ENTRY)
+    assert [batch[0].session_id for batch in sessions] == ["answer_1", "late", "late"]
+    assert [len(batch) for batch in sessions] == [2, 1, 2]
+    assert ids == [["0:0", "0:1"], ["1:0"], ["2:0", "2:1"]]
+    assert asked == [{"question": LME_ENTRY["question"], "evidence": ["0:0"]}]
+
+    run = lifetime.replay(
+        LME_ENTRY, seed=0, decay=True, feedback=True, revisits=2, dataset="longmemeval"
+    )
+    assert run["stored"] == 5
+    assert [o["visit"] for o in sorted(run["outcomes"], key=lambda o: o["visit"])] == [0, 1, 2]
+    assert all(o["top5"] for o in run["outcomes"])
+    # An entry with no flagged turn (an abstention question) asks nothing.
+    unflagged = json.loads(json.dumps(LME_ENTRY).replace(', "has_answer": true', ""))
+    assert lifetime.replay(
+        unflagged, seed=0, decay=False, feedback=False, dataset="longmemeval"
+    )["outcomes"] == []
+
+    data = tmp_path / "lme.json"
+    data.write_text(json.dumps([LME_ENTRY, LME_ENTRY]))
+    args = ["--data", str(data), "--dataset", "longmemeval", "--seeds", "1",
+            "--revisits", "1", "--limit", "1", "--workers", "2"]
+    assert lifetime.main(args) == 0
+    captured = capsys.readouterr()
+    for arm in lifetime.ARMS:
+        assert f"| {arm} |" in captured.out
+    assert "1 timelines" in captured.err
+    # The history covers 92 days; a longer span is asked for, so nothing runs.
+    assert lifetime.span_days(sessions) == 92
+    short = json.loads(json.dumps(LME_ENTRY))
+    short["haystack_dates"][0] = "2023/05/21 (Sun) 09:00"
+    short["haystack_dates"][2] = "2023/05/22 (Mon) 09:00"
+    data.write_text(json.dumps([short, LME_ENTRY]))
+    assert lifetime.main([*args[:-4], "--min-span-days", "30"]) == 0
+    assert "1 timelines" in capsys.readouterr().err

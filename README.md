@@ -12,7 +12,7 @@ pip install "myelin-ai[openai]"   # + OpenAI provider for OrchestratedAgent
 pip install "myelin-ai[google]"   # + Gemini provider for OrchestratedAgent
 ```
 
-Requires Python 3.10+. The import name remains `myelin`.
+Requires Python 3.11+. The import name remains `myelin`.
 
 ---
 
@@ -32,6 +32,11 @@ Measured with the harness in this repository: LongMemEval-S 90.1% with
 `gpt-5-mini` (four runs) and 88.6% with `gpt-4o`; LoCoMo 92.6%. Release
 1.4.0 scored 60.4% on LongMemEval-S with `gpt-4o-mini`. Details and
 caveats: [`bench/results/final.md`](bench/results/final.md).
+
+LoCoMo (Maharana et al., ACL 2024) is licensed CC BY-NC 4.0 and
+LongMemEval (Wu et al., ICLR 2025) is MIT. Neither dataset is
+redistributed here; scores are reported for research comparison. See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 Requires Python 3.11+. `prune()` now quarantines instead of deleting;
 see the [changelog](CHANGELOG.md) before upgrading.

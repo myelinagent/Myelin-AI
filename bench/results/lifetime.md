@@ -199,13 +199,134 @@ useful memories is a reason to keep a memory; on this data it is not a
 reason to rank it higher for a particular question. The stored support
 remains available for explaining why a memory was kept.
 
+## A model in the loop
+
+`--model openai/gpt-4o-mini` adds arms in which the used set is what the
+answering model names from the numbered top 20, not the evidence labels.
+LoCoMo, ten conversations, two schedules, hybrid search.
+
+Each question asked once (1,531 askings per schedule):
+
+| | top 5 | top 10 | top 20 | Needed a hidden memory | Store still searchable |
+|---|---:|---:|---:|---:|---:|
+| static | 46.4 | 55.9 | 63.9 | 0.0 | 100.0 |
+| feedback (labels) | 52.7 | 60.5 | 63.8 | 0.0 | 100.0 |
+| feedback (model) | 52.7 | 60.5 | 63.8 | 0.0 | 100.0 |
+| decay + feedback (labels) | 52.7 | 60.6 | 64.7 | 2.5 | 86.2 |
+| decay + feedback (model) | 52.9 | 60.6 | 64.1 | 1.0 | 93.2 |
+
+Two revisits, repeat askings only:
+
+| | top 5 | top 10 | Needed a hidden memory | Store still searchable |
+|---|---:|---:|---:|---:|
+| static | 44.0 | 53.9 | 0.0 | 100.0 |
+| feedback (labels) | 53.4 | 59.3 | 0.0 | 100.0 |
+| feedback (model) | 53.3 | 59.0 | 0.0 | 100.0 |
+| decay + feedback (labels) | 53.4 | 59.4 | 2.0 | 89.6 |
+| decay + feedback (model) | 53.2 | 59.1 | 0.3 | 96.9 |
+
+- **The ranking gain does not depend on the labels.** The model's own
+  account gives the same top 5 and top 10 as the labels, asked once or
+  revisited.
+- **The model names more.** It named about 1.8 memories per reply, of
+  which 43% were labelled evidence, and it named 87% of the labelled
+  evidence it was shown. With decay that protects more and prunes less:
+  fewer needed memories are hidden (1.0% against 2.5%) and less of the
+  store leaves search (7% against 14%).
+- Every one of the 12,248 askings got a readable reply. Cost: about
+  $2.85 for both runs.
+
+## A second dataset: LongMemEval-S
+
+`--dataset longmemeval` replays each LongMemEval-S entry as its own
+timeline with one question. Two revisits, three schedules, hybrid
+search, no model. 479 of the 500 entries have flagged evidence turns.
+
+All 500 entries:
+
+| | top 5 | top 10 | top 20 | Needed a hidden memory | Store still searchable | Repeat askings: top 5 | top 10 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| static | 65.1 | 77.8 | 86.6 | 0.0 | 100.0 | 64.9 | 77.7 |
+| decay | 62.5 | 75.3 | 83.9 | 2.7 | 98.9 | 62.3 | 75.2 |
+| feedback | 69.4 | 81.2 | 86.6 | 0.0 | 100.0 | 71.3 | 82.7 |
+| decay + feedback | 67.2 | 79.0 | 84.2 | 2.4 | 98.9 | 69.3 | 80.7 |
+
+The 120 entries whose history spans 31 days or more
+(`--min-span-days 31`; knowledge-update 74, temporal-reasoning 46):
+
+| | top 5 | top 10 | top 20 | Needed a hidden memory | Store still searchable | Repeat askings: top 5 | top 10 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| static | 66.7 | 75.9 | 86.2 | 0.0 | 100.0 | 66.5 | 75.9 |
+| decay | 56.3 | 65.5 | 75.0 | 11.2 | 95.5 | 56.2 | 65.5 |
+| feedback | 70.3 | 79.0 | 86.2 | 0.0 | 100.0 | 72.0 | 80.6 |
+| decay + feedback | 61.4 | 70.1 | 76.4 | 9.8 | 95.5 | 63.8 | 72.4 |
+
+- **Feedback carries over.** Top 5 rises 4.3 points over all entries
+  and 6.4 on repeat askings, as on LoCoMo.
+- **Decay does nothing on most of this dataset.** 70% of the histories
+  span 20 days or less (median 10), and nothing is pruned in a history
+  under 90 days. On the first 150 entries, none of which spans more than
+  30 days, the decay rows equal the static rows exactly.
+- **Where decay acts here, it hurts, and feedback does not rescue it.**
+  On the long histories decay costs about ten points at every depth and
+  hides a needed memory on 11.2% of askings while pruning only 4.5% of
+  the store. Feedback brings that to 9.8%, against 8.6% to 2.5% on
+  LoCoMo. With one question per timeline the old evidence is already
+  hidden the first time it is asked for, so it is never shown and never
+  cited. Use cannot protect a memory that has not been used yet.
+- **How to read the damage.** In a decay-only replay, 13 of the 16
+  entries spanning 150 days or more lost a needed memory, and 12 of
+  those 13 are knowledge-update questions. Their labelled evidence
+  includes the turn with the old, superseded value. The measure counts
+  that turn as needed, although the answer may need only the latest
+  value. Answer accuracy was not measured, so part of this cost may be
+  the store forgetting what it should.
+
+With `gpt-4o-mini` naming what it used (one schedule), top 5 on repeat
+askings:
+
+| | static | feedback (model) | feedback (labels) |
+|---|---:|---:|---:|
+| First 150 entries | 56.5 | 59.4 | 61.5 |
+| Histories of 31+ days | 66.4 | 66.8 | 72.0 |
+
+On LongMemEval the model's account is weaker than the labels: it named
+62 to 80% of the labelled evidence it was shown, against 87% on LoCoMo.
+The reason was not tested. Long turns are shown to the model as
+200-token excerpts, which may cut the evidence out, and the model may
+reasonably ignore a turn holding a superseded value. One schedule, so
+treat the sizes as rough.
+
+## Other systems under this protocol: assessed, not run
+
+Read from the current packages (`mem0ai` 2.2.1, `graphiti-core` 0.31.2,
+`letta-client` 1.12.1) and vendor documentation. Effort and cost are
+estimates.
+
+| | Mem0 (open source) | Graphiti / Zep | Letta |
+|---|---|---|---|
+| Model call at write time | By default (extraction) | Always | Not for direct passage inserts |
+| Forgetting by age | No (hosted platform re-ranks by recency of access; hides nothing) | No; contradicted facts are marked invalid | No |
+| Use feedback | Hosted client only; effect on ranking undocumented | No | No |
+| Simulated clock | No | Partly (caller-supplied valid time) | Partly (caller-supplied creation time) |
+| Adapter effort | about 1 day | 2 to 3 days | about 2 days |
+| Cost for LoCoMo | $2 to 5 | $15 to 40 | near zero in passages mode |
+
+None of the three has both age-based forgetting and use feedback in a
+form that can be driven on a simulated clock, so for them the decay and
+feedback arms do not exist and "needed a hidden memory" is zero by
+construction. What can be compared fairly is the static arm: the same
+timelines, lags and revisits, each system in its documented default
+write mode, with an evidence turn counted as retrieved when any
+returned item derives from it. That is about one to one and a half
+weeks of work and $50 to 200, and is not done here.
+
 ## Limits
 
-- One dataset. LoCoMo asks each question once, so use of a memory before
-  it is needed again comes only from questions that share evidence.
-  Workloads that return to the same facts more often would favour both
-  mechanisms more; ones that ask about old, never-revisited details
-  would favour them less.
+- Two datasets, and they disagree about decay. LoCoMo asks many
+  questions of each conversation, so use protects memories before decay
+  reaches them. LongMemEval asks one question per history, so it cannot.
+  Real workloads sit somewhere between.
 - The tables at the top were measured with the use lift at 0.5 and
   without relationships; "As shipped" below has the current defaults.
 - Retrieval only. Whether a smaller, sharper store changes answers was

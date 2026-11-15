@@ -42,10 +42,10 @@ def test_rare_terms_outrank_common_ones(client):
 
 
 def test_search_matches_word_forms(client):
-    client.add("I graduated with a degree in Business Administration")
+    client.add("I qualified as a marine surveyor in Aberdeen")
     client.add("The weather was lovely in Lisbon")
-    assert _contents(client.search("What degree did I graduate with?")) == [
-        "I graduated with a degree in Business Administration"
+    assert _contents(client.search("Where did I qualify as a surveyor?")) == [
+        "I qualified as a marine surveyor in Aberdeen"
     ]
 
 
