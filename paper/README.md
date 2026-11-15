@@ -1,14 +1,20 @@
 # Paper draft
 
-`main.tex` is a draft for arXiv: the memory system, the memory-over-time
-evaluation protocol, and the case for longitudinal benchmarks of agent
-memory. `main.pdf` is the compiled draft (10 pages).
+Two drafts for arXiv that cite each other.
+
+- `main.tex` / `main.pdf` (10 pages): the memory-over-time evaluation
+  protocol and the case for longitudinal benchmarks of agent memory.
+- `myelin.tex` / `myelin.pdf` (8 pages): the system itself, its design,
+  interface, benchmark results, cost, and where it fails. Its numbers
+  come from the same result files listed below, plus the write
+  throughput and latency table from `bench/results/scale.md`.
 
 ## Build
 
 ```bash
 cd paper
 pdflatex main && bibtex main && pdflatex main && pdflatex main
+pdflatex myelin && bibtex myelin && pdflatex myelin && pdflatex myelin
 ```
 
 Needs a TeX distribution with `booktabs`, `natbib`, `enumitem`,
@@ -31,7 +37,11 @@ Every table can be regenerated with the commands in `bench/README.md`.
 
 ## Before submitting
 
-- [ ] Authors, affiliation and contact are placeholders.
+- [x] Author and affiliation set (Scott Benson, Apex Insights). No
+      contact address is printed; add one if wanted.
+- [ ] The system paper cites the benchmark paper as "in preparation";
+      replace with its arXiv identifier once it has one, and cite the
+      system paper from the benchmark paper likewise.
 - [ ] The protocol has no name yet; the code calls it `bench.lifetime`.
 - [ ] `refs.bib` was checked against primary sources on 2026-11-14.
       Two details are still to confirm by hand (noted at the top of the

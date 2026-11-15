@@ -12,7 +12,7 @@ pip install "myelin-ai[openai]"   # + OpenAI provider for OrchestratedAgent
 pip install "myelin-ai[google]"   # + Gemini provider for OrchestratedAgent
 ```
 
-Requires Python 3.10+. The import name remains `myelin`.
+Requires Python 3.11+. The import name remains `myelin`.
 
 ---
 

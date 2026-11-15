@@ -1,0 +1,440 @@
+% DRAFT. Every number comes from bench/results/*.md in this repository;
+% see paper/README.md for the mapping. 
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{natbib}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{listings}
+\setlist{nosep}
+\emergencystretch=1.5em
+\lstset{basicstyle=\ttfamily\small,columns=fullflexible,keepspaces=true,
+  frame=single,framesep=4pt,xleftmargin=6pt,xrightmargin=6pt,
+  showstringspaces=false}
+
+\title{Myelin: A Small Memory Layer for Language Agents\\
+That Dates Its Facts, Learns From Use, and Forgets Reversibly}
+\author{Scott Benson\\Apex Insights}
+\date{DRAFT --- November 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Myelin is an open-source memory layer for language agents: a Python
+library over one SQLite file, with no required dependencies and no
+model of its own. It stores each message or fact with the time from
+which it holds, retrieves with BM25 and optional CPU-only embeddings,
+returns as much as fits a token budget, and keeps three kinds of state
+that most retrieval stores do not: which memories answers actually
+used, how memories relate to one another, and a single health grade
+from which forgetting is decided. Forgetting removes a memory from
+search and keeps it in the store, so it can be undone. With a
+6{,}000-token context Myelin scores 90.1\% on LongMemEval-S
+(\texttt{gpt-5-mini}, mean of four runs; 88.6\% with \texttt{gpt-4o})
+and 92.6\% on LoCoMo, within the range that published systems report,
+with median retrieval latency of 30\,ms at 50{,}000 memories. We
+describe the design, say which parts moved those scores and which did
+not, and report where it fails: on long histories whose old facts are
+asked for once and late, forgetting by age hides evidence that use has
+had no chance to protect. A companion paper gives the longitudinal
+evaluation under which the feedback and forgetting mechanisms were
+measured. Code, harnesses and result files are public under the MIT
+licence.
+\end{abstract}
+
+\section{Introduction}
+
+An agent that works with someone for months needs to remember what was
+said, know which version of a changing fact is current, and avoid
+carrying everything forever. The usual building block is a vector
+store with a similarity search in front of it. That handles the first
+need and none of the others: every item is equally current, nothing is
+learned from which results were useful, and the store only grows.
+
+Myelin is a library that takes those needs as its design brief while
+staying small enough to embed. It has four commitments.
+
+\begin{itemize}
+\item \textbf{Facts carry time.} Every memory has a time from which it
+  is valid and, once superseded, a time from which it is not. Search
+  can be asked what was true at a given moment.
+\item \textbf{Use is recorded.} After an answer, the caller reports
+  which retrieved memories it relied on. That changes ranking for later
+  questions and protects those memories from being forgotten.
+\item \textbf{Forgetting is one decision, and reversible.} A single
+  health grade combines age, confidence, contradictions, use and the
+  use of related memories. Memories below a threshold are quarantined:
+  out of search, still in the store, restored if the grade recovers.
+\item \textbf{No model inside.} The core imports only the standard
+  library. Embeddings, fact extraction and answering are optional and
+  take whatever model the caller supplies.
+\end{itemize}
+
+This paper describes the system as released in version 1.5.0, reports
+its measured behaviour, and is explicit about what the measurements do
+not support. It makes no claim of rank among memory systems; published
+scores use different answering models, judges and prompts, and our own
+identical runs differ by more than the gaps between systems near the
+top.
+
+\section{Related work}
+
+MemGPT \citep{packer2023memgpt} gives an agent tools to page its own
+memory in and out of context. Generative Agents
+\citep{park2023generative} rank memories by recency, importance and
+relevance. MemoryBank \citep{zhong2024memorybank} applies a forgetting
+curve after \citet{ebbinghaus1885}. Mem0 \citep{chhikara2025mem0}
+extracts and reconciles facts with a model at write time, Zep
+\citep{rasmussen2025zep} builds a temporal knowledge graph in which
+contradicted facts are invalidated, A-MEM \citep{xu2025amem} links
+notes to one another, and Hindsight \citep{hindsight2025} and Mastra's
+observational memory \citep{mastra2026om} organise what is retained
+around model-written observations.
+
+Myelin differs mainly in what it leaves out. It makes no model call on
+the write path unless asked, stores what was said and not a rewrite of
+it, and keeps its state in ordinary SQL tables. Its health grade is in
+the tradition of base-level and spreading activation in ACT-R
+\citep{anderson2004actr}, much simplified, with one rule added for
+agents: no amount of use may outweigh a contradiction.
+
+\section{Design}
+
+\subsection{Data model}
+
+A memory is a row: text, a user scope, \texttt{t\_valid} (when the
+fact began to hold), \texttt{t\_invalid} (when it stopped, if it has),
+a confidence and an importance in $[0,1]$, free-form metadata, a
+health state, and counters for use. A conversation is stored one
+memory per message, with its session and position in the metadata.
+Nothing is rewritten at write time; the stored text is what was said.
+
+Two times are kept apart: when a fact holds in the world and when the
+store learned it. \texttt{search(query, as\_of=t)} returns what was
+valid at $t$, so a superseded address is still findable for the period
+in which it was current, and is not returned for a question about now.
+
+\subsection{Retrieval}
+
+Lexical search is BM25 \citep{robertson2009bm25} over a SQLite
+full-text index with stemming. If an embedder is supplied, cosine
+similarity over its vectors is a second ranking, and the two are merged
+by reciprocal-rank fusion \citep{cormack2009rrf}. The bundled embedder
+is a static model that runs on a CPU; any object with an
+\texttt{encode} method can replace it, and if it raises, reads and
+writes continue lexically.
+
+One fusion did not serve both the top of the list and its depth.
+Weighting the vector ranking double put the most evidence inside a
+6{,}000-token context on LongMemEval-S, and was worse than lexical
+search alone in the top ten on LoCoMo's short messages (39.6\% of
+questions with all evidence in the top ten, against 54.9\%). Myelin
+orders the first 20 results by an equal-weight fusion with a small
+rank constant and the rest by the vector-heavy one. That gave 51.8\%
+in the top ten on LoCoMo and left LongMemEval-S unchanged.
+
+\subsection{Context under a budget}
+
+\texttt{recall(query, token\_budget)} returns as many of the best
+results as fit. A memory longer than a limit (100 tokens by default)
+counts as an excerpt of the passages that share words with the query;
+the three best results stay whole. On LongMemEval-S, lowering that
+limit from 300 to 100 tokens raised the share of questions with every
+evidence turn inside a 6{,}000-token context from 92.3\% to 97.0\%:
+evidence is mostly in short user messages, and long assistant replies
+were spending the budget. \texttt{format\_context} lays results out
+oldest first under date headings, and \texttt{build\_answer\_prompt}
+adds rules for the cases answering models get wrong: values that
+changed, totals and orderings, relative dates, and questions the
+history does not cover.
+
+\subsection{Facts at write time}
+
+\texttt{add\_conversation} can take a model. It then makes one call
+per conversation to extract short dated facts (``Ana adopted a dog on
+2023-05-19'') and indexes them with the messages they came from. The
+message remains what is stored and shown; the fact is a second way to
+find it. This is the only model call Myelin can make on the write
+path, and it is off by default.
+
+\subsection{Feedback from use}
+
+After answering, the caller passes \texttt{cite\_used} the results it
+was shown and the ones it used. The numbered context and prompt let
+the answering model supply that list itself, as a final line naming
+entries. Memories that were used are counted as useful. Memories that
+were shown and not used are counted too; this lowers their rank the
+next time they match and has no effect on their health. An earlier
+interface, \texttt{cite(id, answer\_correct)}, records whether an
+answer that relied on a memory turned out right or wrong.
+
+\subsection{One health grade}
+\label{sec:health}
+
+Each memory has a health $h=\sigma(r)$ with
+\begin{align*}
+r ={}& b - a(\text{age})
+       - w_c\,(\text{contradictions})
+       - w_q\,(1-\text{confidence})
+       - w_i\,(1-\text{importance}) \\
+     &+ \min\bigl(L,\;
+        w_u \ln(1+u) + w_g \ln(1+s) + w_t\,\rho\bigr)
+       - w_x \ln(1+x).
+\end{align*}
+Here $a(\cdot)$ grows once a memory is more than thirty days old, $u$
+counts the times the memory was cited as used, $\rho$ decays with the
+time since its last use, $x$ counts cites in answers that were wrong,
+and $s$ is support from related memories. Support flows from each used
+memory to its neighbours: messages within three positions in the same
+conversation, weighted by $1/(1+\text{distance})$, and its eight
+nearest memories by embedding with cosine similarity of at least 0.5,
+weighted by that similarity, both scaled by $\ln(1+u)$ of the source.
+
+The cap $L$ is set just below $w_c$, so one contradiction outweighs
+any amount of use, direct or inherited. A frequently retrieved false
+statement is the memory an agent can least afford to protect. The
+inequality is checked when the library is imported and by a test.
+
+\subsection{Forgetting}
+
+\texttt{prune} first marks values that a later fact supersedes as no
+longer current, setting \texttt{t\_invalid} without deleting them. It
+then computes health and quarantines memories below 0.4. A quarantined
+memory is absent from search and present in the store; it returns if
+its grade recovers and can be inspected at any time. Deletion happens
+only on explicit request, after a waiting period. In releases before
+1.5.0, \texttt{prune} deleted; that was changed because a forgetting
+rule that cannot be audited or undone cannot be tuned safely.
+
+\subsection{Other components}
+
+The library also contains a salience gate that scores a memory's
+importance at write time, and a consolidation routine that tests the
+store against held-out questions about its own contents during idle
+time. Both predate the work reported here. Neither is used in the
+measurements below, and we make no claim about their effect.
+
+\section{Interface}
+
+The whole path from history to answer is a few calls:
+
+\begin{lstlisting}[language=Python]
+from myelin import (MemoryClient, build_answer_prompt, format_context,
+                    parse_used)
+from myelin.embedders import StaticEmbedder
+
+client = MemoryClient(db_path="memory.db", embedder=StaticEmbedder())
+client.add_conversation(turns, when=session_date)   # one memory per message
+
+hits = client.recall(question, token_budget=6000)
+prompt = build_answer_prompt(format_context(hits, numbered=True),
+                             question, ask_used=True)
+reply = your_model(prompt)                          # any provider
+
+client.cite_used(hits, parse_used(reply))           # what the answer used
+client.prune()                                      # supersede, then quarantine
+\end{lstlisting}
+
+An optional HTTP sidecar exposes the same operations (store, search,
+recall, cite, prune and others) for agents not written in Python.
+
+\section{Evaluation}
+\label{sec:eval}
+
+All runs use hybrid search with the bundled static embedder and a
+6{,}000-token context. LongMemEval-S \citep{wu2025longmemeval} is
+judged by \texttt{gpt-4o} with the benchmark's prompts. LoCoMo
+\citep{maharana2024locomo} is judged by \texttt{gpt-4o-mini} with the
+prompt that published scores use.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+ & \texttt{gpt-5-mini} (mean of 4) & \texttt{gpt-4o} (1 run) \\
+\midrule
+Overall & 90.1 & 88.6 \\
+Single-session, user & 96.4 & 97.1 \\
+Single-session, assistant & 96.4 & 94.6 \\
+Single-session, preference & 85.0 & 76.7 \\
+Multi-session & 79.9 & 80.5 \\
+Temporal reasoning & 92.7 & 89.5 \\
+Knowledge update & 94.9 & 93.6 \\
+\bottomrule
+\end{tabular}
+\caption{LongMemEval-S accuracy by question type (\%). The four
+\texttt{gpt-5-mini} runs scored 90.2, 91.0, 89.4 and 89.8.}
+\label{tab:lme}
+\end{table}
+
+\paragraph{LongMemEval-S.} Table~\ref{tab:lme} gives accuracy by
+question type. Release 1.4.0 scored 60.4\% with \texttt{gpt-4o-mini}.
+All evidence turns are inside the context for 96.4\% of questions.
+With the evidence sessions handed to the model directly, bypassing
+retrieval, \texttt{gpt-5-mini} scores 93.4\%, so about three points
+remain between this system and a perfect retriever with the same
+reader. Most of that is in multi-session questions that require
+counting items across sessions.
+
+\paragraph{LoCoMo.} With write-time facts, 92.6\% of 1{,}540 questions
+are judged correct (single-hop 95.7, multi-hop 90.8, temporal 91.0,
+open-domain 76.0; one run). Without facts the figure is 89.0\%. An
+independent audit reports that 6.4\% of LoCoMo's answer key is wrong
+and that this judge prompt is lenient \citep{penfield2026locomo}, which
+puts the ceiling near 93.6\% and means scores at this level should be
+read with caution.
+
+\paragraph{What moved the scores.} In rough order of size on
+LongMemEval-S: the answering prompt and its rules; the answering
+model; ranked lexical search with a token budget in place of a fixed
+top ten; query-focused excerpts; and hybrid search. Write-time facts
+added about three points on LoCoMo and nothing measurable on
+LongMemEval-S. Extra queries written by a model, larger budgets, a
+model-based filter and a stricter counting rule did not help.
+
+\paragraph{Noise.} Runs of an identical configuration differed by up
+to 3.4 points, and about 40 of 500 answers change between two such
+runs. Eight runs across the last two configurations average 90.7\%.
+We did not adopt changes on the strength of a single run.
+
+\paragraph{For orientation.} Published LongMemEval-S scores include
+94.9 with \texttt{gpt-5-mini} and 84.2 with \texttt{gpt-4o}
+\citep{mastra2026om} and 91.4 with a larger model
+\citep{hindsight2025}; on LoCoMo, systems' authors report between 74.0
+and 94.7. These are self-reported with differing models, judges and
+prompts, and are not a like-for-like comparison.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{rrrrr}
+\toprule
+ & \multicolumn{2}{c}{Lexical} & \multicolumn{2}{c}{Hybrid} \\
+Memories & p50 & p95 & p50 & p95 \\
+\midrule
+5{,}000 & 3 & 13 & 8 & 17 \\
+50{,}000 & 15 & 62 & 30 & 78 \\
+200{,}000 & 45 & 190 & 83 & 367 \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{recall} latency in milliseconds for one user's store
+on synthetic text, one process, one SQLite file. Machine-dependent.}
+\label{tab:scale}
+\end{table}
+
+\paragraph{Cost and scale.} Table~\ref{tab:scale} gives retrieval
+latency as a store grows. Writes run at about 17{,}000 to 21{,}000
+memories per second lexically and 2{,}300 to 3{,}700 with embeddings.
+Latency grows in proportion to the store, since hybrid search compares
+the query with every stored vector; an approximate index would be the
+next step beyond a few hundred thousand memories per user. Vectors take
+about 5\,KB per memory. Storing a conversation makes no model call
+unless fact extraction is requested.
+
+\section{Behaviour over time}
+
+Feedback, relationships and forgetting do not change the scores above,
+because those benchmarks ask each question once of a freshly written
+store. A companion paper \citep{myelin2026longitudinal} describes a
+protocol that replays dated conversations on a simulated clock, asks
+each question some sessions after its evidence, and scores retrieval
+without a model. We summarise its results for this system.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+ & All evidence & Needed & Store still \\
+ & in top 5 & but hidden & searchable \\
+\midrule
+Store and search only & 46.3 & 0.0 & 100.0 \\
+Forgetting by age & 48.9 & 8.6 & 66.2 \\
+Feedback & 52.7 & 0.0 & 100.0 \\
+Feedback and forgetting & 52.8 & 2.5 & 86.2 \\
+\bottomrule
+\end{tabular}
+\caption{LoCoMo replayed over time, each question asked up to six
+sessions after its evidence (\%, three schedules).}
+\label{tab:time}
+\end{table}
+
+\paragraph{Feedback helps.} On LoCoMo, reporting which memories were
+used raises the share of questions with all evidence in the top five
+from 46.3\% to 52.7\% (Table~\ref{tab:time}), and from 44.1\% to
+53.7\% when questions are asked again. The gain is the same when
+\texttt{gpt-4o-mini} names what it used in place of the evidence
+labels (52.7\%). It carries to LongMemEval-S (65.1\% to 69.4\%).
+
+\paragraph{Forgetting by age alone is costly.} It removes a third of
+the store from search and hides a memory that a later question needs
+for 8.6\% of questions. No setting of decay speed and threshold
+avoided this.
+
+\paragraph{Graded together, the cost falls.} With use and related use
+in the grade, needed-but-hidden falls to 2.5\% while 14\% of the store
+is still pruned.
+
+\paragraph{Where it fails.} On the 120 LongMemEval-S histories that
+span a month or more, forgetting hides a needed memory for 11.2\% of
+askings and feedback recovers little (9.8\%). Each of those histories
+has one question, so its old evidence has never been retrieved when
+decay reaches it. Use can protect only what has been used. Part of the
+measured cost may be correct behaviour, since most affected questions
+concern a value that changed and the labels count the superseded turn
+as needed; we did not measure answers. Either way, an application
+whose users ask about old, never-revisited details should run Myelin
+with quarantine disabled or with a slower decay, and this is the main
+open problem in the design.
+
+\section{Limitations}
+
+\begin{itemize}
+\item \textbf{Self-run benchmarks.} All scores are ours, on two public
+  benchmarks, with one to four runs per setting. We did not run other
+  systems.
+\item \textbf{Reader-dependent accuracy.} The answering model and
+  prompt account for more of the benchmark score than the memory does.
+  The memory's own contribution is better read from the retrieval
+  figures.
+\item \textbf{Forgetting is tuned on one dataset} and fails on
+  another, as described above.
+\item \textbf{Linear vector search.} Hybrid retrieval is exact and
+  scans every vector.
+\item \textbf{Lexical dependence.} Excerpts and the lexical ranking
+  rely on shared words; a question phrased with none of the evidence's
+  vocabulary depends on the embedder alone.
+\item \textbf{Single-process store.} One SQLite file per deployment;
+  concurrency and multi-tenant operation at scale are untested.
+\item \textbf{Unevaluated components.} The salience gate and
+  consolidation routine are not measured here.
+\end{itemize}
+
+\section{Conclusion}
+
+Myelin shows that a memory layer can be small, model-free on its write
+path and auditable, and still sit in the range of published results on
+the standard benchmarks. Its more distinctive parts (feedback from
+use, relationships, and reversible forgetting from one grade) are
+invisible to those benchmarks and measurable over time: feedback
+reliably helps, and forgetting is safe only where use arrives before
+decay does. We release the library, the harnesses and every result
+file so that both findings can be checked.
+
+\paragraph{Availability.} \texttt{pip install myelin-ai}; source,
+benchmark harnesses and result files are in the project repository
+under the MIT licence. LoCoMo \citep{maharana2024locomo} is distributed
+by its authors under CC BY-NC 4.0 and LongMemEval
+\citep{wu2025longmemeval} under the MIT licence; neither is
+redistributed with this work, and both were used unmodified for
+evaluation.
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+\end{document}
