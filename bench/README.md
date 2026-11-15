@@ -153,7 +153,11 @@ Half of each LoCoMo conversation's questions give cite feedback, the other
 half are scored with cite-informed ranking off and on. No model. Results,
 with the hybrid fusion measurements: [`results/fusion.md`](results/fusion.md).
 
-## Memory over time
+## LongHAUL: memory over time
+
+LongHAUL (Long-horizon Assessment of Use and Loss) replays dated
+conversations on a simulated clock and asks each question some sessions
+after its evidence.
 
 ```bash
 python -m bench.lifetime --data locomo10.json --embedder minishlab/potion-retrieval-32M

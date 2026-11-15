@@ -26,7 +26,7 @@ Requires Python 3.11+. The import name remains `myelin`.
 | Forgetting | `prune()` deleted | quarantine first; deletion only on request; outdated values superseded, not removed |
 | Feedback | `cite(id, answer_correct=)` per memory | `cite_used(results, used)`: the answering model names what it used |
 | Health | age and own use | one grade over age, use and related memories |
-| Benchmarks | none in the repo | `bench/`: LongMemEval, LoCoMo, cite feedback, memory over time, scale |
+| Benchmarks | none in the repo | `bench/`: LongMemEval, LoCoMo, cite feedback, memory over time (LongHAUL), scale |
 
 Measured with the harness in this repository: LongMemEval-S 90.1% with
 `gpt-5-mini` (four runs) and 88.6% with `gpt-4o`; LoCoMo 92.6%. Release
