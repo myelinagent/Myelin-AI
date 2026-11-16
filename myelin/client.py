@@ -1287,6 +1287,11 @@ class MemoryClient:
         return len(self._backend.list_memories(user_id=target))
 
     @property
+    def user_id(self) -> str:
+        """The user this client reads and writes for by default."""
+        return self._user_id
+
+    @property
     def hybrid_search(self) -> bool:
         """Whether search uses embeddings as well as words."""
         return self._vectors_enabled()

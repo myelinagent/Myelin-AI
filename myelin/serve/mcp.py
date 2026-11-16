@@ -15,6 +15,9 @@ line), using only the standard library. Five tools:
 ``mark_used`` is what lets the store learn: memories that keep being
 recalled and not used rank lower next time.
 
+``myelin-mcp --http`` serves the same tools over HTTP for agents that
+run on another machine; see ``myelin.serve.mcp_http``.
+
 Hybrid search is on when the ``static`` extra is installed
 (``pip install "myelin-ai[static]"``); otherwise search is lexical.
 Nothing is pruned automatically.
@@ -24,7 +27,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
 import sys
+import threading
 from collections import OrderedDict
 from pathlib import Path
 from typing import IO, Any
@@ -128,11 +133,15 @@ class ToolError(Exception):
 class MemoryServer:
     """The tools, over one :class:`MemoryClient`."""
 
-    def __init__(self, client: MemoryClient, *, db_path: str = ":memory:") -> None:
+    def __init__(
+        self, client: MemoryClient, *, db_path: str | None = None, user_id: str | None = None
+    ) -> None:
         self.client = client
         self.db_path = db_path
+        # Whose memories these tools read and write; None is the client's own.
+        self.user_id = user_id
         self._recalls: OrderedDict[str, tuple[str, list[SearchResult]]] = OrderedDict()
-        self._recall_count = 0
+        self._lock = threading.Lock()
 
     # ---- tools -----------------------------------------------------------
 
@@ -143,7 +152,7 @@ class MemoryServer:
         importance = float(args.get("importance", 0.5))
         if not 0.0 <= importance <= 1.0:
             raise ToolError("importance must be between 0 and 1")
-        memory = self.client.add(content, importance=importance)
+        memory = self.client.add(content, importance=importance, user_id=self.user_id)
         return f"Remembered (id {memory.id})."
 
     def recall(self, args: dict[str, Any]) -> str:
@@ -151,14 +160,15 @@ class MemoryServer:
         if not query:
             raise ToolError("query is empty")
         budget = max(100, int(args.get("token_budget", 2000)))
-        hits = self.client.recall(query, token_budget=budget)
+        hits = self.client.recall(query, token_budget=budget, user_id=self.user_id)
         if not hits:
             return "No memories match."
-        self._recall_count += 1
-        recall_id = f"r{self._recall_count}"
-        self._recalls[recall_id] = (query, hits)
-        while len(self._recalls) > RECALLS_KEPT:
-            self._recalls.popitem(last=False)
+        # Random, so an id from before a restart can never match a new recall.
+        recall_id = "r" + secrets.token_hex(4)
+        with self._lock:
+            self._recalls[recall_id] = (query, hits)
+            while len(self._recalls) > RECALLS_KEPT:
+                self._recalls.popitem(last=False)
         ids = "\n".join(f"[{n}] {hit.memory.id}" for n, hit in enumerate(hits, start=1))
         return (
             f"{format_context(hits, numbered=True)}\n\n"
@@ -169,9 +179,11 @@ class MemoryServer:
 
     def mark_used(self, args: dict[str, Any]) -> str:
         recall_id = str(args.get("recall_id") or "")
-        if recall_id not in self._recalls:
+        with self._lock:
+            found = self._recalls.get(recall_id)
+        if found is None:
             raise ToolError(f"unknown recall_id {recall_id!r}; call recall again")
-        query, hits = self._recalls[recall_id]
+        query, hits = found
         used = sorted({int(n) for n in args.get("used") or []})
         if any(n < 1 or n > len(hits) for n in used):
             raise ToolError(f"used must be numbers from 1 to {len(hits)}")
@@ -182,14 +194,18 @@ class MemoryServer:
         memory_id = str(args.get("memory_id") or "")
         if not memory_id:
             raise ToolError("memory_id is empty")
-        if not self.client.delete(memory_id):
+        memory = self.client.get(memory_id)
+        owner = self.user_id or self.client.user_id
+        # Another user's memory is reported exactly as a missing one.
+        if memory is None or memory.user_id != owner or not self.client.delete(memory_id):
             raise ToolError(f"no memory with id {memory_id!r}")
         return "Forgotten."
 
     def memory_stats(self, args: dict[str, Any]) -> str:
-        total = self.client.count()
+        total = self.client.count(user_id=self.user_id)
         search = "hybrid (words and meaning)" if self.client.hybrid_search else "lexical (words)"
-        return f"{total} memories in {self.db_path}. Search: {search}."
+        where = f" in {self.db_path}" if self.db_path else ""
+        return f"{total} memories{where}. Search: {search}."
 
     # ---- protocol --------------------------------------------------------
 
@@ -291,6 +307,22 @@ def main(argv: list[str] | None = None) -> int:
         "--no-embedder", action="store_true",
         help="lexical search only, even if the static extra is installed",
     )
+    http = parser.add_argument_group("serving over HTTP instead of stdio")
+    http.add_argument(
+        "--http", action="store_true",
+        help="serve MCP over HTTP (for agents that run somewhere else)",
+    )
+    http.add_argument("--host", default="127.0.0.1", help="address to listen on")
+    http.add_argument("--port", type=int, default=8766)
+    http.add_argument(
+        "--tokens-file", default="",
+        help="JSON file mapping access tokens to user ids, for several people; "
+        "for one person set MYELIN_MCP_TOKEN instead",
+    )
+    http.add_argument(
+        "--allow-origin", action="append", default=[],
+        help="a browser origin allowed to call the server (repeatable); none by default",
+    )
     args = parser.parse_args(argv)
 
     # Only protocol messages may reach stdout; anything a library prints
@@ -310,6 +342,13 @@ def main(argv: list[str] | None = None) -> int:
         cite_learning=True,
     )
     try:
+        if args.http:
+            from myelin.serve import mcp_http
+
+            return mcp_http.run(
+                client, host=args.host, port=args.port, user_id=args.user_id,
+                tokens_file=args.tokens_file, allowed_origins=args.allow_origin,
+            )
         serve(MemoryServer(client, db_path=db_path), sys.stdin, protocol_out)
     finally:
         client.close()

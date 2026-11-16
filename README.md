@@ -26,13 +26,15 @@ person or an AI agent can follow it.
 - [What gets set up](#what-gets-set-up)
 - [If you are an AI agent: run the guided setup](#if-you-are-an-ai-agent-run-the-guided-setup)
 - [Install](#install)
-- [Claude Code](#claude-code) · [Codex](#openai-codex) · [Gemini CLI](#gemini-cli) · [Grok](#grok) · [OpenClaw](#openclaw) · [Hermes](#hermes-agent) · [OpenAI Dots](#openai-dots)
+- [Claude Code](#claude-code) · [Codex](#openai-codex) · [Gemini CLI](#gemini-cli) · [Grok](#grok) · [OpenClaw](#openclaw) · [Hermes](#hermes-agent) · [Cloud agents over HTTP](#cloud-agents-the-http-server) · [OpenAI Dots](#openai-dots)
 - [Home-built agents](#home-built-agents)
 - [The memory instructions](#the-memory-instructions) · [Check it works](#check-it-works) · [Remove it](#remove-it)
 
-**What has been tested.** The server (see `tests/test_mcp_server.py`),
-the Claude Code commands, the `uvx` form, the Python example and the
-HTTP calls below were run against the published 1.5.1 package. The
+**What has been tested.** The server (see `tests/test_mcp_server.py`
+and `tests/test_mcp_http.py`), the Claude Code commands, the `uvx`
+form, the Python example, the sidecar calls and the HTTP server (with
+the official MCP client and with Claude Code as a remote client) were
+run here. No HTTPS proxy or public deployment was tested. The
 commands for Codex, Gemini CLI, Grok, OpenClaw and Hermes are taken
 from each vendor's documentation as of 2026-11-16 and have not been
 run here; each section links its source. If a command has
@@ -53,7 +55,7 @@ time), `forget` and `memory_stats`.
 
 What to know before you start:
 
-- **It is local.** The server makes no network calls. With hybrid search
+- **It is local** unless you choose the HTTP server. The server makes no network calls. With hybrid search
   it downloads a small embedding model once, then runs offline.
 - **It is not encrypted.** Anyone who can read the file can read the
   memories. Do not let it store passwords, keys or other secrets.
@@ -242,8 +244,8 @@ the memory instructions wherever your Grok setup keeps project rules.
 Source: [Grok Build MCP docs](https://docs.x.ai/build/features/mcp-servers).
 
 **Grok Bot** (xAI's cloud teammates) runs on a cloud computer, not your
-machine, so it cannot start a program on your laptop. See
-[OpenAI Dots](#openai-dots) for what that means and the options.
+machine, so it needs the [HTTP server](#cloud-agents-the-http-server).
+Untested; see [OpenAI Dots](#openai-dots).
 
 ### OpenClaw
 
@@ -294,21 +296,64 @@ full path as `command`. Instructions go in `~/.hermes/SOUL.md` (always
 loaded) or in the project's `AGENTS.md`.
 Source: [Hermes MCP docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp).
 
+### Cloud agents: the HTTP server
+
+Agents that run on someone else's computer (OpenAI Dots, Grok Bot, a
+hosted assistant with "custom connectors") cannot start a program on
+your machine. For them, `myelin-mcp --http` serves the same five tools
+over the network, using MCP's Streamable HTTP transport.
+
+**You host it.** Myelin-AI does not run a service for you. You need a
+machine that stays on, keeps its disk, and can be reached over HTTPS: a
+small VM, a home server behind a tunnel, or a container host with a
+persistent volume. Hosts that give each request a fresh filesystem will
+lose the memory file.
+
+```bash
+pip install -U "myelin-ai[static]"
+export MYELIN_MCP_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+myelin-mcp --http --host 0.0.0.0 --port 8766 --db-path /var/lib/myelin/memory.db
+```
+
+Then put HTTPS in front of it. The server does not encrypt traffic, so
+without this step the token and every memory cross the network in the
+clear. Any reverse proxy or tunnel that forwards to port 8766 will do.
+
+The agent connects to `https://your-host/mcp` and sends the token as
+`Authorization: Bearer <token>`. For a connector form that only takes a
+URL, use `https://your-host/mcp/<token>`; the token is then part of the
+URL, so treat the whole URL as the secret and expect it to appear in the
+connecting product's settings.
+
+| | |
+|---|---|
+| One person | set `MYELIN_MCP_TOKEN`; memories belong to `--user-id` |
+| Several people | `--tokens-file tokens.json` containing `{"<token>": "<user id>"}`; each token sees only its own user's memories |
+| Browser clients | refused unless you pass `--allow-origin https://...` |
+| No token | the server starts only on `127.0.0.1`, for local testing; it will not start open to the network |
+| Health check | `GET /health` (no token, reveals nothing) |
+
+What this does not do: rate limiting, token rotation without a restart,
+OAuth, or encryption of the file at rest. Anyone holding a token can
+read, add and delete that user's memories. Use a long random token, keep
+it out of chat, and rotate it by restarting with a new one.
+
+Local tools can use the same server, which is one way to share a memory
+between machines:
+
+```bash
+claude mcp add --transport http myelin https://your-host/mcp --header "Authorization: Bearer $MYELIN_MCP_TOKEN"
+```
+
 ### OpenAI Dots
 
-**Not supported yet, and untested.** Dots (and Grok Bot) are agents that
-run on a cloud computer inside the vendor's product. `myelin-mcp` is a
-local program that talks over stdio, so a cloud agent cannot start it on
-your machine, and Myelin-AI does not ship a hosted or HTTP MCP endpoint.
-Published descriptions of Dots also say they keep their own memory.
-
-If you want to try anyway, the route that could work is to have the dot
-install `myelin-ai` on its own cloud computer and call the Python client
-or the command directly, keeping the memory file in whatever storage the
-dot keeps between runs. Whether that storage persists, and whether a dot
-may install packages, is not something this project has been able to
-confirm. A remote MCP endpoint for cloud agents is the right fix and is
-not built.
+**Untested.** A dot runs on OpenAI's cloud computer, so it needs the
+[HTTP server](#cloud-agents-the-http-server) above, reachable over
+HTTPS. This project has not been able to confirm how a dot adds a custom
+MCP server, or whether it can send an `Authorization` header; if its
+connector form takes only a URL, use the `/mcp/<token>` form. Published
+descriptions of Dots also say they keep their own memory, so decide
+which one you want it to rely on. The same applies to xAI's Grok Bot.
 
 ### Home-built agents
 
