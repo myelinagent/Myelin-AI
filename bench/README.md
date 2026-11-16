@@ -167,3 +167,21 @@ Replays each LoCoMo conversation on a simulated clock, asking every question
 some sessions after its evidence, with forgetting (`prune()` after each
 session) and cite feedback (`cite_used`) off and on. No model. Results:
 [`results/lifetime.md`](results/lifetime.md).
+
+### The static arm for other systems
+
+```bash
+python -m bench.gateway --port 8765 &          # counts model calls, serves the static embedder
+python -m bench.compare --system mem0 --data locomo10.json --out bench/runs/compare --limit 3
+python -m bench.compare --report --system myelin mem0 graphiti letta-passages \
+    --data locomo10.json --out bench/runs/compare --limit 3
+```
+
+`bench.compare` runs LongHAUL's static arm (same timelines, same seeds, same
+lags) through Mem0, Graphiti and Letta's archival passages, each in its own
+virtualenv; none of them is a dependency of this project. Their items are
+facts, edges or passages, so each carries the ids of the turns it derives
+from. Writes are checkpointed per turn: `--max-minutes` stops cleanly and the
+same command continues. Results, set-up and what the comparison does and does
+not show: [`results/compare.md`](results/compare.md).
+

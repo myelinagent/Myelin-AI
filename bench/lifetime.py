@@ -134,6 +134,40 @@ def span_days(sessions: list[list[Turn]]) -> int:
 TIMELINES = {"locomo": locomo_timeline, "longmemeval": longmemeval_timeline}
 
 
+def schedule(
+    ids: list[list[str]],
+    asked: list[dict[str, Any]],
+    seed: int,
+    *,
+    max_lag: int = 6,
+    revisits: int = 0,
+) -> dict[int, list[dict[str, Any]]]:
+    """When each question is asked: the questions due after each session.
+
+    A question waits a random number of sessions (up to ``max_lag``)
+    after the last session holding its evidence; ``revisits`` asks it
+    again that many times, each some sessions later. Questions without
+    evidence in the timeline are not asked.
+    """
+    final = len(ids) - 1
+    session_of = {i: step for step, names in enumerate(ids) for i in names}
+    rng = random.Random(seed)
+    due: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for qa in asked:
+        evidence = qa["evidence"]
+        if not evidence:
+            continue
+        last = max(session_of[e] for e in evidence)
+        ask_at = min(final, last + rng.randint(0, max_lag))
+        due[ask_at].append({**qa, "evidence": evidence, "lag": ask_at - last, "visit": 0})
+        for visit in range(1, revisits + 1):
+            ask_at = min(final, ask_at + rng.randint(1, max_lag))
+            due[ask_at].append(
+                {**qa, "evidence": evidence, "lag": ask_at - last, "visit": visit}
+            )
+    return due
+
+
 def replay(
     sample: dict[str, Any],
     seed: int,
@@ -153,23 +187,7 @@ def replay(
     ``complete``), the used memories are the ones the model names.
     """
     sessions, ids, asked = TIMELINES[dataset](sample)
-    order = range(len(sessions))
-    session_of = {i: step for step, names in enumerate(ids) for i in names}
-
-    rng = random.Random(seed)
-    due: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    for qa in asked:
-        evidence = qa["evidence"]
-        if not evidence:
-            continue
-        last = max(session_of[e] for e in evidence)
-        ask_at = min(len(order) - 1, last + rng.randint(0, max_lag))
-        due[ask_at].append({**qa, "evidence": evidence, "lag": ask_at - last, "visit": 0})
-        for visit in range(1, revisits + 1):
-            ask_at = min(len(order) - 1, ask_at + rng.randint(1, max_lag))
-            due[ask_at].append(
-                {**qa, "evidence": evidence, "lag": ask_at - last, "visit": visit}
-            )
+    due = schedule(ids, asked, seed, max_lag=max_lag, revisits=revisits)
 
     now = [sessions[0][0].session_date]
     client = MemoryClient(
