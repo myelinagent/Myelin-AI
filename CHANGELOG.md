@@ -6,6 +6,22 @@ project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **OAuth bot identities for `myelin-mcp --http`** (`--bots-file`).
+  Each agent is an OAuth client with its own id and secret and gets
+  short-lived access tokens from `POST /oauth/token` (client
+  credentials grant, Basic or form credentials). The bot's name is the
+  source on what it stores. Scopes `memory:read` and `memory:write`
+  allow read-only bots, which are offered only the tools they may
+  call. The server publishes RFC 9728 and RFC 8414 metadata and points
+  to it from `401` replies. `myelin-mcp --add-bot NAME [--read-only]`
+  creates a bot and prints its secret once; the file stores only a
+  hash and is re-read when it changes, so removing a bot or replacing
+  its secret ends its tokens without a restart. New flags
+  `--public-url` and `--token-seconds`. Fixed tokens keep working.
+  No authorization-code (browser sign-in) flow.
+
 ### Documentation
 
 - README: "Host it securely", with worked examples for a home server
