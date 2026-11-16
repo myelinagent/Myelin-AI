@@ -6,6 +6,14 @@ project uses semantic versioning.
 
 ## [Unreleased]
 
+### Documentation
+
+- README: a setup guide for using Myelin-AI as agent memory, written
+  for a person or an AI agent to follow, with a guided setup and a
+  "skip to the end" path. Covers Claude Code (global and per project),
+  Codex, Gemini CLI, Grok, OpenClaw, Hermes, OpenAI Dots (not
+  supported yet) and home-built agents.
+
 ## [1.5.1] — 2026-11-16
 
 ### Added
