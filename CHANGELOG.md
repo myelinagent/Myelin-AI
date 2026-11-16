@@ -22,6 +22,14 @@ project uses semantic versioning.
   `--public-url` and `--token-seconds`. Fixed tokens keep working.
   No authorization-code (browser sign-in) flow.
 
+### Benchmarks
+
+- `bench.compare`: LongHAUL's static arm run through Mem0, Graphiti and
+  Letta's archival passages on three LoCoMo conversations, beside
+  Myelin-AI on the same questions, with what each spent to write.
+  `bench.gateway` counts their model calls and serves one embedder to
+  all of them. Results and limits: `bench/results/compare.md`.
+
 ### Documentation
 
 - README: "Host it securely", with worked examples for a home server

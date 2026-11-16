@@ -109,8 +109,11 @@ def test_a_session_level_item_is_given_the_turn_it_reads_like():
     session = {"D1:1": "Ana: I adopted a beagle named Pickle.", "D1:2": "Ben: Lovely!"}
     assert compare.closest_turns("Ana adopted a beagle", session) == ("D1:1",)
     assert compare.closest_turns("Something about tax returns", session) == ()
-    both = {"D1:1": "Ana: the beagle", "D1:2": "Ben: the beagle"}
+    both = {"D1:1": "Ana: the beagle", "D1:2": "Ben: the beagle", "D1:3": "Ana: ok",
+            "D1:4": "Ben: fine", "D1:5": "Ana: bye"}
     assert compare.closest_turns("a beagle", both) == ("D1:1", "D1:2")
+    # A name that is in most turns does not single any of them out.
+    assert compare.closest_turns("Ana said something else", both) == ()
     assert "guessed" in compare.ADAPTERS["mem0-session"].label
 
 

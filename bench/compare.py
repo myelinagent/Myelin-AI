@@ -39,6 +39,7 @@ import statistics
 import sys
 import time
 import urllib.request
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -269,9 +270,12 @@ class Mem0Adapter(Adapter):
 
 def closest_turns(text: str, turns: dict[str, str]) -> tuple[str, ...]:
     """The turn or turns holding most of an item's words; none if no
-    turn shares a word with it."""
-    wanted = set(_terms(text))
-    held = {turn_id: len(wanted & set(_terms(body))) for turn_id, body in turns.items()}
+    turn shares a telling word with it. Words in more than half the
+    turns (the speakers' names, mostly) tell nothing and are left out."""
+    words = {turn_id: set(_terms(body)) for turn_id, body in turns.items()}
+    counts = Counter(word for held in words.values() for word in held)
+    wanted = {w for w in _terms(text) if counts[w] <= len(turns) / 2}
+    held = {turn_id: len(wanted & held) for turn_id, held in words.items()}
     best = max(held.values(), default=0)
     return tuple(turn_id for turn_id, count in held.items() if count == best) if best else ()
 
