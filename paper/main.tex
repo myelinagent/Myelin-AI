@@ -113,6 +113,30 @@ static in the sense above. An independent audit of LoCoMo reports that
 6.4\% of its answer key is wrong and that its commonly used judge
 prompt accepts many wrong answers \citep{penfield2026locomo}.
 
+\paragraph{Recent agent-memory benchmarks.} Three recent benchmarks
+move beyond conversational question answering. MemoryAgentBench
+\citep{hu2025memoryagentbench} feeds converted long-context datasets
+to an agent incrementally and tests four competencies: accurate
+retrieval, test-time learning, long-range understanding and selective
+forgetting, where the last means revising or overwriting stored
+information when contradictory evidence arrives. AMA-Bench
+\citep{zhao2026amabench} draws its histories from real agent
+trajectories with expert-written questions, plus synthetic ones with
+rule-based questions, and groups them by recall, causal inference,
+state updating and state abstraction. MemRiskBench
+\citep{jiang2026memriskbench} scores 120 scripted episodes with
+deterministic checks on the agent's trace and no model as judge, over
+risks that include reliance on a stale memory, misresolved conflicts,
+reuse of a revoked memory and decay of a standing constraint. These
+cover what a memory should do when facts change, and MemRiskBench
+shares our preference for scoring without a model. As far as we can
+tell from the papers, none of the three replays a history on a clock
+and asks a question some sessions after its evidence or more than
+once, measures what forgetting by age costs in evidence that a later
+question needed, or measures the effect of usage feedback on later
+retrieval. Those are the three things LongHAUL adds, and it is
+complementary to them.
+
 \paragraph{Systems.} Published scores on these benchmarks are largely
 self-reported, with different answering models, judges and prompts
 \citep{chhikara2025mem0,rasmussen2025zep,hindsight2025,mastra2026om}.

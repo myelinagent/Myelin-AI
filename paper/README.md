@@ -46,6 +46,10 @@ Every table can be regenerated with the commands in `bench/README.md`.
       Loss); the code runs it as `bench.lifetime`. A web search on
       2026-11-15 found no other benchmark with that name; search again
       before submitting.
+- [ ] The three benchmark entries added on 2026-11-16 (MemoryAgentBench,
+      AMA-Bench, MemRiskBench) were taken from their arXiv pages by an
+      automated reader; check authors, titles and the paragraph's
+      description of each against the papers by hand.
 - [ ] `refs.bib` was checked against primary sources on 2026-11-14.
       Two details are still to confirm by hand (noted at the top of the
       file): the BM25 survey's volume and pages, and the exact title of
