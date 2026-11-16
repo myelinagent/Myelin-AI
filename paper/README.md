@@ -66,9 +66,9 @@ Every table can be regenerated with the commands in `bench/README.md`.
       needed-but-hidden against store pruned from the decay sweep.
 - [x] A second dataset (LongMemEval-S) and a model in the loop
       (`gpt-4o-mini`) have been run; see `bench/results/lifetime.md`.
-- [ ] Other systems have not been run under the protocol. The
-      assessment in `bench/results/lifetime.md` puts a static-arm
-      comparison with Mem0, Graphiti and Letta at one to two weeks and
-      $50 to 200.
+- [x] Mem0, Graphiti and Letta passages have been run on the static
+      arm, on three LoCoMo conversations; see `bench/results/compare.md`.
+- [ ] That comparison covers three of ten conversations. Running all
+      ten is about $8.50 more in model calls and several hours.
 - [ ] The model arms on LongMemEval-S are one schedule; repeat them
       before relying on the sizes.
