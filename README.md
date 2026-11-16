@@ -16,39 +16,356 @@ Requires Python 3.11+. The import name remains `myelin`.
 
 ---
 
-## Memory for Claude Code (1.5.1)
+## Set up Myelin-AI as memory for your agents
 
-`myelin-mcp` is an MCP server that gives an assistant memory that lasts
-between sessions.
+Myelin-AI ships `myelin-mcp`, a small MCP server that gives an AI
+assistant memory that lasts between sessions. Most coding agents can
+register it with one command. This section is written so that either a
+person or an AI agent can follow it.
+
+- [What gets set up](#what-gets-set-up)
+- [If you are an AI agent: run the guided setup](#if-you-are-an-ai-agent-run-the-guided-setup)
+- [Install](#install)
+- [Claude Code](#claude-code) · [Codex](#openai-codex) · [Gemini CLI](#gemini-cli) · [Grok](#grok) · [OpenClaw](#openclaw) · [Hermes](#hermes-agent) · [OpenAI Dots](#openai-dots)
+- [Home-built agents](#home-built-agents)
+- [The memory instructions](#the-memory-instructions) · [Check it works](#check-it-works) · [Remove it](#remove-it)
+
+**What has been tested.** The server (see `tests/test_mcp_server.py`),
+the Claude Code commands, the `uvx` form, the Python example and the
+HTTP calls below were run against the published 1.5.1 package. The
+commands for Codex, Gemini CLI, Grok, OpenClaw and Hermes are taken
+from each vendor's documentation as of 2026-11-16 and have not been
+run here; each section links its source. If a command has
+changed, the tool's own `mcp --help` is the authority.
+
+### What gets set up
+
+| Piece | What it is | Where it lives |
+|---|---|---|
+| The package | `myelin-ai` from PyPI, which provides the `myelin-mcp` command | your Python environment |
+| The memory file | one SQLite file holding every memory as plain text | `~/.myelin/memory.db` by default, or a path you choose |
+| The registration | an entry telling your agent how to start `myelin-mcp` | the agent's own config file |
+| The instructions | a few lines telling the agent when to recall and remember | the agent's instruction file (`CLAUDE.md`, `AGENTS.md`, ...) |
+
+The assistant gets five tools: `remember`, `recall`, `mark_used` (which
+recalled memories its answer relied on, so useful ones rank higher next
+time), `forget` and `memory_stats`.
+
+What to know before you start:
+
+- **It is local.** The server makes no network calls. With hybrid search
+  it downloads a small embedding model once, then runs offline.
+- **It is not encrypted.** Anyone who can read the file can read the
+  memories. Do not let it store passwords, keys or other secrets.
+- **Nothing is deleted or pruned automatically.**
+- **One file can be shared.** Several tools pointed at the same
+  `--db-path` share one memory. Separate paths keep them apart.
+
+### If you are an AI agent: run the guided setup
+
+A person has asked you to set up Myelin-AI for them. Do it as a short
+conversation, not a silent install. The person should finish knowing
+what was put on their machine, where, and how to undo it.
+
+**Start by offering the choice.** Say, in your own words:
+
+> Myelin-AI gives me memory that lasts between our sessions. It is a
+> small local program and one file on your machine; nothing is sent
+> anywhere. I can walk you through five short choices, or you can say
+> **"skip to the end"** and I will use the recommended settings, set
+> everything up, and tell you what I did.
+
+**Guided path.** Ask one question at a time, give the recommendation,
+and wait for the answer.
+
+1. **Which tool am I?** Work out which agent you are running in (Claude
+   Code, Codex, Gemini CLI, Grok, OpenClaw, Hermes, something else) and
+   tell the person. Use the matching section below. If you cannot tell,
+   ask.
+2. **One memory for everything, or one per project?** Explain the
+   difference: *global* means preferences and decisions follow the
+   person into every project; *per project* means each project keeps its
+   own memory and nothing crosses over. Recommend global for a single
+   person's own machine, per project for client work or anything
+   confidential.
+3. **Search by meaning, or by words only?** *Hybrid* finds memories that
+   mean the same thing in different words; it installs two extra
+   libraries and downloads a model of about 125 MB once.
+   *Lexical* needs nothing extra and matches on shared words. Recommend
+   hybrid.
+4. **Where should the memory file live?** Offer the default for the
+   scope chosen (`~/.myelin/memory.db`, or `.myelin/memory.db` inside
+   the project). Say that it is a plain, unencrypted file. For a
+   per-project file, offer to add `.myelin/` to `.gitignore` so
+   memories are not committed.
+5. **May I add standing instructions?** Show the exact text from
+   [The memory instructions](#the-memory-instructions) and name the
+   file you would add it to. Without it you will use memory only when
+   asked. Recommend yes.
+
+Then install, register, and verify (next sections), and finish with the
+summary below.
+
+**"Skip to the end" path.** Use these defaults without asking: global
+scope, hybrid search, `~/.myelin/memory.db`, instructions added. Then
+give the same summary.
+
+**Rules for both paths.**
+
+- Append to existing instruction and config files; never replace them.
+  If a `myelin` entry or a "Memory" block is already there, leave it
+  and say so.
+- Do not use `sudo` or change system Python. If the install fails, stop
+  and report the error.
+- Verify before you claim success: run the check in
+  [Check it works](#check-it-works) and report what you saw.
+- Never store a secret, and say so if the person asks you to.
+
+**Finish with a summary** that lists: what was installed and its
+version; the path of the memory file; which config file you changed and
+the entry you added; which instruction file you changed; whether the
+check passed; that a new session is needed before the tools appear; and
+the commands to remove it all.
+
+### Install
 
 ```bash
-pip install -U "myelin-ai[static]"
+pip install -U "myelin-ai[static]"    # hybrid search (recommended)
+pip install -U myelin-ai              # lexical search only
+```
+
+Requires Python 3.11 or newer. `myelin-mcp` must be on the `PATH` that
+your agent uses; `which myelin-mcp` (or `where myelin-mcp` on Windows)
+should print a path. If it does not, either install with
+`pipx install "myelin-ai[static]"`, or skip installing and let `uvx`
+run it: wherever a command below says `myelin-mcp`, write
+`uvx --from "myelin-ai[static]" myelin-mcp` instead.
+
+Options: `--db-path FILE` (default `~/.myelin/memory.db`), `--user-id
+NAME` (separate ids in one file do not see each other), `--no-embedder`
+(lexical search even if the extra is installed).
+
+### Claude Code
+
+**Global** (every project shares one memory):
+
+```bash
 claude mcp add --scope user myelin -- myelin-mcp
 ```
 
-That registers it for every project, with memories in
-`~/.myelin/memory.db`. For a separate store per project, register it
-inside the project instead:
+**One project** (run inside the project; memory stays in the project):
 
 ```bash
 claude mcp add myelin -- myelin-mcp --db-path .myelin/memory.db
 ```
 
-The assistant gets five tools: `remember`, `recall`, `mark_used` (which
-of the recalled memories its answer relied on, so useful ones rank
-higher next time), `forget` and `memory_stats`. The server needs no
-model and no network once the embedding model has been downloaded;
-without the `static` extra it searches by words only. It never prunes
-on its own. Do not store secrets in it: the file is plain SQLite.
+The default scope is `local`: the entry applies to this project on your
+machine only. To share the registration with teammates through a
+committed `.mcp.json`, use `--scope project`; each person still gets
+their own memory file, so add `.myelin/` to `.gitignore`.
 
-### How the assistant knows to use it
+Instructions go in `~/.claude/CLAUDE.md` (global) or `CLAUDE.md` in the
+project. Check with `claude mcp list` or `/mcp` in a session.
 
-Once registered, the server tells the assistant what it is for when the
-session starts: recall at the start of a task, remember lasting
-preferences, facts and decisions, and report which memories were used.
-Each tool also carries its own description. That is usually enough for
-recall on request; for consistent use without being asked, add a few
-lines to your `CLAUDE.md` (`~/.claude/CLAUDE.md` for every project):
+### OpenAI Codex
+
+```bash
+codex mcp add myelin -- myelin-mcp
+```
+
+That writes the user config, `~/.codex/config.toml`, which the Codex
+CLI and IDE extension share. For one project, add this to
+`.codex/config.toml` in the project (read for trusted projects only):
+
+```toml
+[mcp_servers.myelin]
+command = "myelin-mcp"
+args = ["--db-path", ".myelin/memory.db"]
+```
+
+Instructions go in `~/.codex/AGENTS.md` (global) or `AGENTS.md` in the
+project. Check with `codex mcp list` or `/mcp` in the TUI.
+Source: [Codex MCP docs](https://developers.openai.com/codex/mcp).
+
+### Gemini CLI
+
+`gemini mcp add` defaults to **project** scope, so pass `-s user` for a
+global memory:
+
+```bash
+gemini mcp add -s user myelin myelin-mcp
+```
+
+```bash
+gemini mcp add myelin myelin-mcp --db-path .myelin/memory.db
+```
+
+Or edit `~/.gemini/settings.json` (global) or `.gemini/settings.json`
+(project):
+
+```json
+{ "mcpServers": { "myelin": { "command": "myelin-mcp", "args": [] } } }
+```
+
+Instructions go in `~/.gemini/GEMINI.md` (global) or `GEMINI.md` in the
+project. Check with `gemini mcp list` or `/mcp`. A local server in a
+folder Gemini does not trust shows as disconnected; run `gemini trust`.
+Source: [Gemini CLI MCP docs](https://www.geminicli.com/docs/tools/mcp-server).
+That page notes that for some account tiers Gemini CLI has been replaced
+by Antigravity CLI; if you use that, check its own MCP documentation.
+
+### Grok
+
+**Grok Build** (xAI's coding CLI):
+
+```bash
+grok mcp add myelin -- myelin-mcp
+```
+
+```bash
+grok mcp add --scope project myelin -- myelin-mcp --db-path .myelin/memory.db
+```
+
+These write `~/.grok/config.toml` and `.grok/config.toml`:
+
+```toml
+[mcp_servers.myelin]
+command = "myelin-mcp"
+args = []
+```
+
+Grok Build also reads MCP servers from `~/.claude.json` and a project
+`.mcp.json`, so a Claude Code registration may already be picked up.
+Check with `grok mcp list`, `grok mcp doctor myelin` or `/mcps`. The
+docs read for this guide do not name Grok Build's instruction file; put
+the memory instructions wherever your Grok setup keeps project rules.
+Source: [Grok Build MCP docs](https://docs.x.ai/build/features/mcp-servers).
+
+**Grok Bot** (xAI's cloud teammates) runs on a cloud computer, not your
+machine, so it cannot start a program on your laptop. See
+[OpenAI Dots](#openai-dots) for what that means and the options.
+
+### OpenClaw
+
+```bash
+openclaw mcp add myelin --command myelin-mcp
+```
+
+For a specific file, each argument gets its own `--arg`. The OpenClaw
+docs do not show an argument that starts with a dash, so if this form
+is rejected use `openclaw mcp set` with the JSON below:
+
+```bash
+openclaw mcp add myelin --command myelin-mcp --arg=--db-path --arg="$HOME/.myelin/memory.db"
+```
+
+```bash
+openclaw mcp set myelin '{"command":"myelin-mcp","args":["--db-path","/home/you/.myelin/memory.db"]}'
+```
+
+Check with `openclaw mcp doctor myelin --probe`. A running gateway does
+not pick up the change by itself: restart it, or use its reload path.
+Instructions go in `AGENTS.md` in the agent workspace
+(`~/.openclaw/workspace` by default), which OpenClaw loads at the start
+of every session. OpenClaw agents often run unattended, so the
+"never store secrets" line matters more here.
+Source: [OpenClaw MCP docs](https://docs.openclaw.ai/cli/mcp).
+
+OpenClaw's memory-plugin convention is also supported directly: the HTTP
+sidecar (`myelin-serve`, see [Home-built agents](#home-built-agents))
+exposes `/hooks/before_agent_start` and `/hooks/agent_end`.
+
+### Hermes Agent
+
+Add to `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  myelin:
+    command: "myelin-mcp"
+    args: []
+```
+
+Start a new session or run `/reload-mcp`. Hermes prefixes MCP tools, so
+the tools appear as `mcp_myelin_recall`, `mcp_myelin_remember` and so
+on; use those names in the instructions. Hermes starts local servers
+with a filtered environment, so if `myelin-mcp` is not found, give its
+full path as `command`. Instructions go in `~/.hermes/SOUL.md` (always
+loaded) or in the project's `AGENTS.md`.
+Source: [Hermes MCP docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp).
+
+### OpenAI Dots
+
+**Not supported yet, and untested.** Dots (and Grok Bot) are agents that
+run on a cloud computer inside the vendor's product. `myelin-mcp` is a
+local program that talks over stdio, so a cloud agent cannot start it on
+your machine, and Myelin-AI does not ship a hosted or HTTP MCP endpoint.
+Published descriptions of Dots also say they keep their own memory.
+
+If you want to try anyway, the route that could work is to have the dot
+install `myelin-ai` on its own cloud computer and call the Python client
+or the command directly, keeping the memory file in whatever storage the
+dot keeps between runs. Whether that storage persists, and whether a dot
+may install packages, is not something this project has been able to
+confirm. A remote MCP endpoint for cloud agents is the right fix and is
+not built.
+
+### Home-built agents
+
+Three ways in, from least to most code.
+
+**1. Your framework speaks MCP.** Start `myelin-mcp` as a stdio server
+and add the [memory instructions](#the-memory-instructions) to your
+system prompt. The server's `initialize` reply also carries those
+instructions in its `instructions` field.
+
+**2. Python, in process.** The loop is: recall, answer, report what was
+used, remember what is worth keeping.
+
+```python
+from myelin import MemoryClient, build_answer_prompt, format_context, parse_used
+from myelin.embedders import StaticEmbedder      # needs the "static" extra
+
+memory = MemoryClient(db_path="memory.db", user_id="scott",
+                      embedder=StaticEmbedder(), cite_learning=True)
+
+def answer(question: str) -> str:
+    hits = memory.recall(question, token_budget=2000)
+    prompt = build_answer_prompt(format_context(hits, numbered=True),
+                                 question, ask_used=True)
+    reply = your_model(prompt)                   # any provider
+    memory.cite_used(hits, parse_used(reply), query=question)
+    return reply
+
+memory.add("Scott deploys on Tuesday mornings.")  # when something is worth keeping
+```
+
+Drop `embedder=` for lexical search. Deciding *what* is worth keeping is
+your agent's job: give your model a `remember` tool, or call
+`memory.add_conversation(turns, when=...)` to store a whole exchange.
+
+**3. Any language, over HTTP.** Run the sidecar on the same machine:
+
+```bash
+MYELIN_CITE_LEARNING=1 myelin-serve --db-path ~/.myelin/memory.db --port 8765
+```
+
+| Call | Body | Returns |
+|---|---|---|
+| `POST /tools/memory_store` | `{"content": "..."}` | the stored memory |
+| `POST /tools/memory_recall` | `{"query": "...", "token_budget": 2000, "numbered": true}` | `hits` and a ready `context` string |
+| `POST /tools/memory_cite_used` | `{"shown": [ids], "used": [1, 3], "query": "..."}` | counts |
+| `POST /tools/memory_forget` | `{"memory_id": "..."}` | whether it was deleted |
+
+The sidecar has no authentication and binds to loopback; do not expose
+it beyond the local machine without putting it behind something that
+does.
+
+### The memory instructions
+
+Registering the server tells the agent the tools exist. These lines make
+it use them without being asked. Put them in the agent's instruction
+file:
 
 ```markdown
 ## Memory
@@ -61,9 +378,42 @@ lines to your `CLAUDE.md` (`~/.claude/CLAUDE.md` for every project):
 - Never store passwords, keys or other secrets.
 ```
 
-Agents that are not Claude Code can use the same server if they speak
-MCP, or call the Python client or the HTTP sidecar directly; in those
-cases the instructions above belong in the agent's system prompt.
+| Tool | Global file | Project file |
+|---|---|---|
+| Claude Code | `~/.claude/CLAUDE.md` | `CLAUDE.md` |
+| Codex | `~/.codex/AGENTS.md` | `AGENTS.md` |
+| Gemini CLI | `~/.gemini/GEMINI.md` | `GEMINI.md` |
+| OpenClaw | `AGENTS.md` in the workspace | |
+| Hermes | `~/.hermes/SOUL.md` | `AGENTS.md` |
+| Home-built | your system prompt | |
+
+### Check it works
+
+1. The command starts and answers. This prints one line of JSON naming
+   `myelin-ai` and its version:
+
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | myelin-mcp --db-path /tmp/myelin-check.db --no-embedder
+   ```
+
+2. The agent sees it: the tool's list command (`claude mcp list`,
+   `codex mcp list`, `gemini mcp list`, `grok mcp list`,
+   `openclaw mcp doctor myelin --probe`) shows `myelin` as connected.
+3. It remembers across sessions: in a new session say "remember that my
+   test phrase is blue heron", start another new session, and ask "what
+   is my test phrase?".
+
+### Remove it
+
+```bash
+claude mcp remove myelin        # or: codex mcp remove myelin, gemini mcp remove myelin
+pip uninstall myelin-ai
+```
+
+Then delete the "Memory" block from the instruction file, and delete
+the memory file (`~/.myelin/memory.db` or the project's `.myelin/`) if
+you want the memories gone. Removing the registration alone leaves the
+memories on disk.
 
 ## What's new in 1.5.0
 
