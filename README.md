@@ -317,7 +317,8 @@ myelin-mcp --http --host 0.0.0.0 --port 8766 --db-path /var/lib/myelin/memory.db
 
 Then put HTTPS in front of it. The server does not encrypt traffic, so
 without this step the token and every memory cross the network in the
-clear. Any reverse proxy or tunnel that forwards to port 8766 will do.
+clear. Any reverse proxy or tunnel that forwards to port 8766 will do;
+[Host it securely](#host-it-securely) below has three worked examples.
 
 The agent connects to `https://your-host/mcp` and sends the token as
 `Authorization: Bearer <token>`. For a connector form that only takes a
@@ -363,6 +364,189 @@ between machines:
 ```bash
 claude mcp add --transport http myelin https://your-host/mcp --header "Authorization: Bearer $MYELIN_MCP_TOKEN"
 ```
+
+### Host it securely
+
+Three ways to run the HTTP server, from most private to most reachable.
+Whichever you pick, the same five rules apply:
+
+1. **HTTPS only.** The server speaks plain HTTP, so something in front
+   of it must add TLS: a reverse proxy, a tunnel, or the platform's own
+   edge. Never open port 8766 to the internet directly.
+2. **Listen as narrowly as you can.** With a proxy or tunnel on the same
+   machine, keep the default `--host 127.0.0.1` so the only way in is
+   through the proxy.
+3. **A long random token, kept out of files you share.** Generate it
+   with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`
+   and store it where the host keeps secrets, not in a repository, a
+   Dockerfile or a chat. Prefer the `Authorization` header over the
+   `/mcp/<token>` URL form, because URLs end up in proxy logs.
+4. **One copy, on a disk that persists.** The memory is a single SQLite
+   file. Run exactly one server per file and put the file on storage
+   that survives a restart.
+5. **Back it up.** This takes a consistent copy while the server is
+   running:
+
+   ```bash
+   python3 -c "import sqlite3; sqlite3.connect('/var/lib/myelin/memory.db').backup(sqlite3.connect('/backups/memory.db'))"
+   ```
+
+   The file is not encrypted, so encrypt the disk or the backup if that
+   matters to you.
+
+The Hetzner and Railway steps below follow those vendors' documentation
+and have not been run end to end by this project; the server commands
+in them have. Check with `curl https://your-host/health`, which should
+print `{"status": "ok"}`, then follow [Check it works](#check-it-works).
+
+#### On your own machine or home server
+
+Best when only your own devices need the memory. Nothing is exposed to
+the internet.
+
+Run the server as a service that listens on this machine only. On Linux
+with systemd, as root:
+
+```bash
+useradd --system --home /var/lib/myelin --create-home --shell /usr/sbin/nologin myelin
+python3 -m venv /opt/myelin
+/opt/myelin/bin/pip install "myelin-ai[static]"
+install -m 600 -o root -g root /dev/null /etc/myelin.env
+echo "MYELIN_MCP_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" > /etc/myelin.env
+```
+
+Then save this as `/etc/systemd/system/myelin-mcp.service`:
+
+```ini
+[Unit]
+Description=Myelin-AI memory server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=myelin
+EnvironmentFile=/etc/myelin.env
+Environment=HOME=/var/lib/myelin
+ExecStart=/opt/myelin/bin/myelin-mcp --http --host 127.0.0.1 --port 8766 --db-path /var/lib/myelin/memory.db
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/myelin
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload && systemctl enable --now myelin-mcp
+```
+
+The token lives in `/etc/myelin.env`, readable by root only; read it
+from there when you register an agent. The first start downloads the
+search model (about 125 MB) into `/var/lib/myelin`.
+
+To reach it from your other devices, use a private network rather than
+a port forward on your router:
+
+- **Tailscale** (or another WireGuard mesh): `tailscale serve --bg 8766`
+  publishes the server at `https://<machine>.<tailnet>.ts.net`, with a
+  real certificate, to devices signed in to your tailnet and nobody
+  else. Agents on your laptop and phone can use it; cloud agents cannot.
+- **Cloud agents too:** they need a public address. `tailscale funnel --bg 8766`
+  or a Cloudflare Tunnel (`cloudflared`) with your own domain gives one
+  without opening a port at home. From that moment the token is the only
+  thing between the internet and your memory, so treat the setup as the
+  cloud case below.
+
+#### On a cloud VM (example: Hetzner)
+
+Best when cloud agents need to reach the memory and you want the data
+on a machine you control. The smallest shared-CPU server is enough.
+
+1. Create an Ubuntu server with your SSH key, and point a DNS name
+   (say `memory.example.com`) at its address. A name is required:
+   certificates are not issued for a bare IP address.
+2. In the Hetzner console attach a **Firewall** that allows inbound TCP
+   22 (ideally from your own address only), 80 and 443, and nothing
+   else. Port 8766 stays closed.
+3. Install the service exactly as in the home-server steps above. It
+   listens on `127.0.0.1` only.
+4. Put [Caddy](https://caddyserver.com/docs/install) in front. It
+   obtains and renews the certificate by itself. `/etc/caddy/Caddyfile`:
+
+   ```
+   memory.example.com {
+       reverse_proxy 127.0.0.1:8766
+       log {
+           output discard
+       }
+   }
+   ```
+
+   ```bash
+   systemctl reload caddy
+   ```
+
+   Access logging is switched off so that tokens sent in the URL form
+   are not written to disk. Remove the `log` block if you only ever use
+   the header.
+5. Keep the machine patched (`apt install unattended-upgrades`), log in
+   with SSH keys only, and schedule the backup command from rule 5 to
+   somewhere off the server.
+
+Agents then connect to `https://memory.example.com/mcp`. The same steps
+work on any provider's VM.
+
+#### On a container platform (example: Railway)
+
+Best when you do not want to look after a server. The platform supplies
+HTTPS and restarts; you supply a container and a volume. The cost is
+that your memories sit on the platform's storage.
+
+Put this `Dockerfile` in a repository of your own (it contains no
+secrets):
+
+```dockerfile
+FROM python:3.12-slim
+RUN pip install --no-cache-dir "myelin-ai[static]"
+# Fetch the search model while building, so the container starts quickly.
+RUN python -c "from myelin.embedders import StaticEmbedder; StaticEmbedder().encode('warm')"
+ENV PORT=8766
+CMD ["sh", "-c", "exec myelin-mcp --http --host 0.0.0.0 --port ${PORT} --db-path /data/memory.db"]
+```
+
+Then, in Railway:
+
+1. Create a project from that repository. Railway builds the Dockerfile
+   and sets `PORT` itself.
+2. Attach a **Volume** to the service with mount path `/data`. Without
+   it every deploy starts with an empty memory.
+3. Under **Variables**, add `MYELIN_MCP_TOKEN` with a freshly generated
+   token. The server refuses to start on `0.0.0.0` without one, so a
+   forgotten variable fails loudly instead of running open.
+4. Under **Settings → Networking**, generate a public domain. Set the
+   health check path to `/health`.
+5. Leave the service at one replica. Two copies cannot share the file.
+
+Agents connect to `https://<your-service>.up.railway.app/mcp`. Here the
+server listens on `0.0.0.0` because the platform's edge, not a proxy on
+the same machine, is what reaches it; the container's port is not
+reachable from the internet except through that edge. The same
+Dockerfile works on Fly.io, Render or any host that offers a persistent
+volume. Avoid hosts without one (most "serverless" and free tiers).
+
+#### After it is up
+
+- Give each agent its own token with a `--tokens-file`, as described
+  under [one memory for all your agents](#cloud-agents-the-http-server),
+  so that one leaked token can be removed without changing the rest.
+- To rotate a token, change it where it is stored and restart the
+  service; then update the agents that used it.
+- If a token leaks, rotate it first, then use `memory_stats` and
+  `recall` to look for memories you did not write. Each one carries the
+  source that stored it.
 
 ### OpenAI Dots
 

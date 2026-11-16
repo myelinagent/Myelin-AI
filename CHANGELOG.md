@@ -6,6 +6,12 @@ project uses semantic versioning.
 
 ## [Unreleased]
 
+### Documentation
+
+- README: "Host it securely", with worked examples for a home server
+  (systemd, Tailscale), a cloud VM (Hetzner, Caddy) and a container
+  platform (Railway), plus backup and token rotation.
+
 ### Fixed
 
 - `myelin-mcp --http` sends `Connection: close` when it refuses a
