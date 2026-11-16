@@ -67,8 +67,9 @@ Every table can be regenerated with the commands in `bench/README.md`.
 - [x] A second dataset (LongMemEval-S) and a model in the loop
       (`gpt-4o-mini`) have been run; see `bench/results/lifetime.md`.
 - [x] Mem0, Graphiti and Letta passages have been run on the static
-      arm, on three LoCoMo conversations; see `bench/results/compare.md`.
-- [ ] That comparison covers three of ten conversations. Running all
-      ten is about $8.50 more in model calls and several hours.
+      arm, on all ten LoCoMo conversations (Graphiti on eight); see
+      `bench/results/compare.md`.
+- [ ] Graphiti is missing `conv-43` and `conv-47` (about $1.60 in model
+      calls). The second-embedder tables cover three conversations.
 - [ ] The model arms on LongMemEval-S are one schedule; repeat them
       before relying on the sizes.
