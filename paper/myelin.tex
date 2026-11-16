@@ -400,8 +400,13 @@ open problem in the design.
 
 \begin{itemize}
 \item \textbf{Self-run benchmarks.} All scores are ours, on two public
-  benchmarks, with one to four runs per setting. We did not run other
-  systems.
+  benchmarks, with one to four runs per setting. Other systems
+  were run only on the static arm of the over-time protocol, on three
+  LoCoMo conversations; there, with the same static embedder, Mem0
+  retrieved as much of the evidence in the top 5 as \mbox{Myelin-AI}
+  without feedback (48.7\% against 47.6\%) and more in the top 10 and
+  20, at one model call per turn written. Details are in the companion
+  benchmark paper.
 \item \textbf{Reader-dependent accuracy.} The answering model and
   prompt account for more of the benchmark score than the memory does.
   The memory's own contribution is better read from the retrieval
