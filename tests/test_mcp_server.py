@@ -27,6 +27,10 @@ def _request(server, method, params=None, request_id=1):
     return server.handle(message)
 
 
+def _recall_id(text):
+    return text.split("recall_id: ")[1].split(".")[0]
+
+
 def _call(server, name, **arguments):
     reply = _request(server, "tools/call", {"name": name, "arguments": arguments})
     result = reply["result"]
@@ -68,7 +72,7 @@ def test_remember_then_recall_then_forget(server):
     text, error = _call(server, "recall", query="What does Priya prefer?")
     assert not error
     assert "[1] " in text and "Priya prefers tabs over spaces." in text
-    assert "recall_id: r1" in text
+    assert _recall_id(text).startswith("r")
 
     memory_id = text.split("Memory ids:\n[1] ")[1].split("\n")[0]
     assert _call(server, "forget", memory_id=memory_id) == ("Forgotten.", False)
@@ -82,14 +86,15 @@ def test_mark_used_records_what_the_answer_relied_on(server):
     _call(server, "remember", content="Deploys need two approvals.")
     text, _ = _call(server, "recall", query="deploys")
     assert "[2] " in text
+    recall_id = _recall_id(text)
 
-    assert _call(server, "mark_used", recall_id="r1", used=[1]) == (
+    assert _call(server, "mark_used", recall_id=recall_id, used=[1]) == (
         "Recorded: 1 used, 1 not used.", False,
     )
     counted = server.client.cite_telemetry
     assert counted["cite_learning_enabled"]
 
-    text, error = _call(server, "mark_used", recall_id="r1", used=[3])
+    text, error = _call(server, "mark_used", recall_id=recall_id, used=[3])
     assert error and "1 to 2" in text
     text, error = _call(server, "mark_used", recall_id="nope", used=[])
     assert error and "unknown recall_id" in text
@@ -108,16 +113,18 @@ def test_stats_count_and_search_mode(server):
     _call(server, "remember", content="One thing.")
     text, error = _call(server, "memory_stats")
     assert not error
-    assert text.startswith("1 memories in :memory:.") and "lexical" in text
+    assert text == "1 memories. Search: lexical (words)."
 
 
 def test_only_recent_recalls_are_kept(server):
     _call(server, "remember", content="Nadia runs the weekly planning meeting.")
-    for _ in range(mcp.RECALLS_KEPT + 1):
-        _call(server, "recall", query="planning meeting")
-    assert _call(server, "mark_used", recall_id="r1", used=[])[1] is True
-    last = f"r{mcp.RECALLS_KEPT + 1}"
-    assert _call(server, "mark_used", recall_id=last, used=[1])[1] is False
+    ids = [
+        _recall_id(_call(server, "recall", query="planning meeting")[0])
+        for _ in range(mcp.RECALLS_KEPT + 1)
+    ]
+    assert len(set(ids)) == len(ids)
+    assert _call(server, "mark_used", recall_id=ids[0], used=[])[1] is True
+    assert _call(server, "mark_used", recall_id=ids[-1], used=[1])[1] is False
 
 
 def test_serve_reads_lines_and_survives_garbage(server):
@@ -153,3 +160,42 @@ def test_the_command_keeps_memories_between_runs(tmp_path):
     run(call("remember", content="Omar's team ships from the release branch."))
     (reply,) = run(call("recall", query="Where does Omar's team ship from?"))
     assert "release branch" in reply["result"]["content"][0]["text"]
+
+
+def test_tools_are_scoped_to_one_user():
+    client = MemoryClient(user_id="shared", cite_learning=True)
+    try:
+        ana = mcp.MemoryServer(client, user_id="ana")
+        ben = mcp.MemoryServer(client, user_id="ben")
+        _call(ana, "remember", content="Ana keeps the release notes in Notion.")
+        assert _call(ben, "recall", query="release notes") == ("No memories match.", False)
+        assert _call(ben, "memory_stats")[0].startswith("0 memories")
+
+        text, _ = _call(ana, "recall", query="release notes")
+        memory_id = text.split("Memory ids:\n[1] ")[1].split("\n")[0]
+        # Another user cannot forget it, and is told only that it is not there.
+        text, error = _call(ben, "forget", memory_id=memory_id)
+        assert error and "no memory" in text
+        assert _call(ana, "forget", memory_id=memory_id) == ("Forgotten.", False)
+    finally:
+        client.close()
+
+
+def test_memories_are_tagged_with_the_agent_that_stored_them():
+    client = MemoryClient(user_id="t")
+    try:
+        named = mcp.MemoryServer(client, source="My Agent!")
+        assert named.source == "my-agent"
+        _request(named, "initialize", {"clientInfo": {"name": "claude-code"}})
+        assert named.source == "my-agent"  # an explicit label wins
+
+        announced = mcp.MemoryServer(client)
+        _call(announced, "remember", content="Stored before any client name is known.")
+        _request(announced, "initialize", {"clientInfo": {"name": "Claude Code", "version": "2"}})
+        _call(announced, "remember", content="Stored after the client introduced itself.")
+        text, _ = _call(announced, "recall", query="stored client")
+        ids = text.split("Memory ids:\n")[1].split("\n\n")[0].splitlines()
+        assert sum("(from claude-code)" in line for line in ids) == 1
+        assert sum("(from" not in line for line in ids) == 1
+    finally:
+        client.close()

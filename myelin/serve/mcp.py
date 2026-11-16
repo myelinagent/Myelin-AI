@@ -6,7 +6,8 @@
 Speaks the Model Context Protocol over stdio (one JSON-RPC message per
 line), using only the standard library. Five tools:
 
-* ``remember``   store something worth keeping
+* ``remember``   store something worth keeping (tagged with the agent
+  it came from, shown again by ``recall``)
 * ``recall``     the best-matching memories that fit a token budget
 * ``mark_used``  say which recalled memories the answer relied on
 * ``forget``     delete one memory
@@ -14,6 +15,9 @@ line), using only the standard library. Five tools:
 
 ``mark_used`` is what lets the store learn: memories that keep being
 recalled and not used rank lower next time.
+
+``myelin-mcp --http`` serves the same tools over HTTP for agents that
+run on another machine; see ``myelin.serve.mcp_http``.
 
 Hybrid search is on when the ``static`` extra is installed
 (``pip install "myelin-ai[static]"``); otherwise search is lexical.
@@ -24,7 +28,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
 import sys
+import threading
 from collections import OrderedDict
 from pathlib import Path
 from typing import IO, Any
@@ -121,6 +127,14 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+def clean_source(name: Any) -> str | None:
+    """A short label for the agent a memory came from, or None."""
+    if not isinstance(name, str):
+        return None
+    label = "".join(c if c.isalnum() or c in "-_." else "-" for c in name.strip().lower())
+    return label.strip("-")[:40] or None
+
+
 class ToolError(Exception):
     """A tool call that cannot be carried out; reported to the model."""
 
@@ -128,11 +142,27 @@ class ToolError(Exception):
 class MemoryServer:
     """The tools, over one :class:`MemoryClient`."""
 
-    def __init__(self, client: MemoryClient, *, db_path: str = ":memory:") -> None:
+    def __init__(
+        self,
+        client: MemoryClient,
+        *,
+        db_path: str | None = None,
+        user_id: str | None = None,
+        source: str | None = None,
+        adopt_client_name: bool = True,
+    ) -> None:
         self.client = client
         self.db_path = db_path
+        # Whose memories these tools read and write; None is the client's own.
+        self.user_id = user_id
+        # Which agent is writing, recorded on each memory it stores. When
+        # not given, the name the client announces at initialize is used.
+        self.source = clean_source(source)
+        # Over stdio one client owns the connection, so its name can stand
+        # in for a missing label. Over HTTP many clients share these tools.
+        self._adopt_client_name = adopt_client_name
         self._recalls: OrderedDict[str, tuple[str, list[SearchResult]]] = OrderedDict()
-        self._recall_count = 0
+        self._lock = threading.Lock()
 
     # ---- tools -----------------------------------------------------------
 
@@ -143,7 +173,12 @@ class MemoryServer:
         importance = float(args.get("importance", 0.5))
         if not 0.0 <= importance <= 1.0:
             raise ToolError("importance must be between 0 and 1")
-        memory = self.client.add(content, importance=importance)
+        memory = self.client.add(
+            content,
+            importance=importance,
+            user_id=self.user_id,
+            metadata={"source": self.source} if self.source else None,
+        )
         return f"Remembered (id {memory.id})."
 
     def recall(self, args: dict[str, Any]) -> str:
@@ -151,15 +186,20 @@ class MemoryServer:
         if not query:
             raise ToolError("query is empty")
         budget = max(100, int(args.get("token_budget", 2000)))
-        hits = self.client.recall(query, token_budget=budget)
+        hits = self.client.recall(query, token_budget=budget, user_id=self.user_id)
         if not hits:
             return "No memories match."
-        self._recall_count += 1
-        recall_id = f"r{self._recall_count}"
-        self._recalls[recall_id] = (query, hits)
-        while len(self._recalls) > RECALLS_KEPT:
-            self._recalls.popitem(last=False)
-        ids = "\n".join(f"[{n}] {hit.memory.id}" for n, hit in enumerate(hits, start=1))
+        # Random, so an id from before a restart can never match a new recall.
+        recall_id = "r" + secrets.token_hex(4)
+        with self._lock:
+            self._recalls[recall_id] = (query, hits)
+            while len(self._recalls) > RECALLS_KEPT:
+                self._recalls.popitem(last=False)
+        ids = "\n".join(
+            f"[{n}] {hit.memory.id}"
+            + (f" (from {origin})" if (origin := (hit.memory.metadata or {}).get("source")) else "")
+            for n, hit in enumerate(hits, start=1)
+        )
         return (
             f"{format_context(hits, numbered=True)}\n\n"
             f"Memory ids:\n{ids}\n\n"
@@ -169,9 +209,11 @@ class MemoryServer:
 
     def mark_used(self, args: dict[str, Any]) -> str:
         recall_id = str(args.get("recall_id") or "")
-        if recall_id not in self._recalls:
+        with self._lock:
+            found = self._recalls.get(recall_id)
+        if found is None:
             raise ToolError(f"unknown recall_id {recall_id!r}; call recall again")
-        query, hits = self._recalls[recall_id]
+        query, hits = found
         used = sorted({int(n) for n in args.get("used") or []})
         if any(n < 1 or n > len(hits) for n in used):
             raise ToolError(f"used must be numbers from 1 to {len(hits)}")
@@ -182,14 +224,18 @@ class MemoryServer:
         memory_id = str(args.get("memory_id") or "")
         if not memory_id:
             raise ToolError("memory_id is empty")
-        if not self.client.delete(memory_id):
+        memory = self.client.get(memory_id)
+        owner = self.user_id or self.client.user_id
+        # Another user's memory is reported exactly as a missing one.
+        if memory is None or memory.user_id != owner or not self.client.delete(memory_id):
             raise ToolError(f"no memory with id {memory_id!r}")
         return "Forgotten."
 
     def memory_stats(self, args: dict[str, Any]) -> str:
-        total = self.client.count()
+        total = self.client.count(user_id=self.user_id)
         search = "hybrid (words and meaning)" if self.client.hybrid_search else "lexical (words)"
-        return f"{total} memories in {self.db_path}. Search: {search}."
+        where = f" in {self.db_path}" if self.db_path else ""
+        return f"{total} memories{where}. Search: {search}."
 
     # ---- protocol --------------------------------------------------------
 
@@ -202,6 +248,8 @@ class MemoryServer:
         params = message.get("params") or {}
         try:
             if method == "initialize":
+                if self.source is None and self._adopt_client_name:
+                    self.source = clean_source((params.get("clientInfo") or {}).get("name"))
                 asked = params.get("protocolVersion")
                 version = asked if asked in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
                 result: dict[str, Any] = {
@@ -291,6 +339,27 @@ def main(argv: list[str] | None = None) -> int:
         "--no-embedder", action="store_true",
         help="lexical search only, even if the static extra is installed",
     )
+    parser.add_argument(
+        "--source", default="",
+        help="label recorded on each memory this agent stores (default: the "
+        "name the connecting client announces)",
+    )
+    http = parser.add_argument_group("serving over HTTP instead of stdio")
+    http.add_argument(
+        "--http", action="store_true",
+        help="serve MCP over HTTP (for agents that run somewhere else)",
+    )
+    http.add_argument("--host", default="127.0.0.1", help="address to listen on")
+    http.add_argument("--port", type=int, default=8766)
+    http.add_argument(
+        "--tokens-file", default="",
+        help="JSON file mapping access tokens to user ids, for several people; "
+        "for one person set MYELIN_MCP_TOKEN instead",
+    )
+    http.add_argument(
+        "--allow-origin", action="append", default=[],
+        help="a browser origin allowed to call the server (repeatable); none by default",
+    )
     args = parser.parse_args(argv)
 
     # Only protocol messages may reach stdout; anything a library prints
@@ -310,7 +379,17 @@ def main(argv: list[str] | None = None) -> int:
         cite_learning=True,
     )
     try:
-        serve(MemoryServer(client, db_path=db_path), sys.stdin, protocol_out)
+        if args.http:
+            from myelin.serve import mcp_http
+
+            return mcp_http.run(
+                client, host=args.host, port=args.port, user_id=args.user_id,
+                tokens_file=args.tokens_file, allowed_origins=args.allow_origin,
+            )
+        serve(
+            MemoryServer(client, db_path=db_path, source=args.source or None),
+            sys.stdin, protocol_out,
+        )
     finally:
         client.close()
     return 0

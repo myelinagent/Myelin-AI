@@ -317,7 +317,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         if self.path == "/health":
             self._write_json(200, {"ok": True, "service": "myelin-sidecar"})
             return
@@ -326,7 +326,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._write_json(404, {"error": f"unknown route {self.path}"})
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -373,7 +373,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._write_json(404, {"error": str(exc)})
         except KeyError as exc:
             self._write_json(400, {"error": f"missing field: {exc}"})
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("handler error on %s", self.path)
             self._write_json(500, {"error": type(exc).__name__, "message": str(exc)})
 

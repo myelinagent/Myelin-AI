@@ -6,13 +6,40 @@ project uses semantic versioning.
 
 ## [Unreleased]
 
+## [1.5.2] — 2026-11-16
+
+### Added
+
+- **`myelin-mcp --http`**: the memory tools over MCP's Streamable HTTP
+  transport, for agents that run on another machine. Access tokens
+  (`MYELIN_MCP_TOKEN`, or `--tokens-file` for several users) are
+  required on any non-loopback address, sent as a bearer header or as
+  `/mcp/<token>`; each token sees only its own user's memories. Standard
+  library only. It does not terminate HTTPS.
+- **Source tags**: each memory stored through the MCP server records
+  which agent stored it (`metadata["source"]`), and `recall` shows it.
+  Over stdio the label is `--source` or the client's announced name;
+  over HTTP it is fixed per token in the tokens file, or given as
+  `?source=` or an `X-Myelin-Source` header. Several agents sharing one
+  user's token share one memory.
+- `MemoryClient.user_id`.
+
+### Changed
+
+- `recall` ids from the MCP server are random, so an id from before a
+  restart cannot match a later recall.
+- `forget` over MCP refuses a memory that belongs to another user.
+- `memory_stats` over HTTP does not report where the store is kept.
+
 ### Documentation
 
 - README: a setup guide for using Myelin-AI as agent memory, written
   for a person or an AI agent to follow, with a guided setup and a
   "skip to the end" path. Covers Claude Code (global and per project),
-  Codex, Gemini CLI, Grok, OpenClaw, Hermes, OpenAI Dots (not
-  supported yet) and home-built agents.
+  Codex, Gemini CLI, Grok, OpenClaw, Hermes, cloud agents over HTTP,
+  OpenAI Dots (untested) and home-built agents.
+- Docs and papers call the system Myelin-AI; the benchmark paper gains
+  a related-work paragraph.
 
 ## [1.5.1] — 2026-11-16
 
