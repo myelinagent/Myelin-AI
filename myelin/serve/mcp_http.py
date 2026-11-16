@@ -174,6 +174,8 @@ class _Handler(BaseHTTPRequestHandler):
         if data:
             self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
+        if self.close_connection:
+            self.send_header("Connection", "close")  # tell the client, do not just hang up
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()

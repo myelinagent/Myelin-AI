@@ -6,6 +6,12 @@ project uses semantic versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- `myelin-mcp --http` sends `Connection: close` when it refuses a
+  request and closes the connection, so clients are told. The test for
+  oversized requests no longer races the close.
+
 ## [1.5.2] — 2026-11-16
 
 ### Added

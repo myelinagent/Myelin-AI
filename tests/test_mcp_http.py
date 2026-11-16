@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import urllib.error
@@ -138,8 +139,22 @@ def test_other_methods_paths_and_origins_are_refused(served):
 def test_bad_bodies_are_refused(served):
     status, reply, _ = _send(served + "/mcp", raw=b"not json", token=ANA)
     assert status == 400 and reply["error"]["code"] == -32700
-    too_big = b" " * (mcp_http.MAX_BODY_BYTES + 1)
-    assert _send(served + "/mcp", raw=too_big, token=ANA)[0] == 413
+
+    # The server answers an oversized request from its headers and closes
+    # without reading the body, so declare the size and send nothing: a
+    # client still writing a megabyte would race the close.
+    host, port = served.removeprefix("http://").split(":")
+    connection = http.client.HTTPConnection(host, int(port), timeout=10)
+    try:
+        connection.putrequest("POST", "/mcp")
+        connection.putheader("Authorization", f"Bearer {ANA}")
+        connection.putheader("Content-Length", str(mcp_http.MAX_BODY_BYTES + 1))
+        connection.endheaders()
+        response = connection.getresponse()
+        assert response.status == 413
+        assert response.getheader("Connection") == "close"
+    finally:
+        connection.close()
 
 
 def test_it_will_not_start_open_to_the_network():
