@@ -324,8 +324,8 @@ write mode, with an evidence turn counted as retrieved when any
 returned item derives from it. That is about one to one and a half
 weeks of work and $50 to 200, and is not done here.
 
-Since done for the static arm on three conversations:
-[`compare.md`](compare.md).
+Since done for the static arm on all ten conversations (Graphiti on
+eight): [`compare.md`](compare.md).
 
 ## Limits
 

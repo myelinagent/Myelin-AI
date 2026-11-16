@@ -27,7 +27,8 @@ project uses semantic versioning.
 ### Benchmarks
 
 - `bench.compare`: LongHAUL's static arm run through Mem0, Graphiti and
-  Letta's archival passages on three LoCoMo conversations, beside
+  Letta's archival passages on the ten LoCoMo conversations (Graphiti
+  on eight), beside
   Myelin-AI on the same questions, with what each spent to write.
   `bench.gateway` counts their model calls and serves one embedder to
   all of them. Results and limits: `bench/results/compare.md`.
