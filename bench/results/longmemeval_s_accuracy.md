@@ -49,7 +49,7 @@ memory system by about ten points. For orientation only, plain retrieval
 with `gpt-4o` is reported at about 80 and the leaders at 90 to 96 with
 newer models.
 
-## With Myelin's answer prompt
+## With Myelin-AI's answer prompt
 
 Added later the same day. The table above used a plain prompt (`v1`).
 `build_answer_prompt` (style `reasoned`) tells the answerer how to handle
@@ -80,7 +80,7 @@ with the three best-ranked turns kept whole (`--whole-turns 3`), prompt
 |---|---:|
 | 1.4.0 search, top 10, plain prompt | 60.4 |
 | Stage 1 retrieval, plain prompt | 64.8 |
-| + Myelin prompt, first version | 74.4 |
+| + Myelin-AI prompt, first version | 74.4 |
 | + top three turns whole, stricter abstention rule | 77.2 |
 
 ### What the revisions did
@@ -126,4 +126,4 @@ turn. It showed two weaknesses, and the second version addresses both:
 
 Machine-readable summaries: `longmemeval_s_qa_baseline.json`,
 `longmemeval_s_qa_stage1.json`, `longmemeval_s_qa_oracle.json` (plain
-prompt) and `longmemeval_s_qa_v2_*.json` (Myelin prompt).
+prompt) and `longmemeval_s_qa_v2_*.json` (Myelin-AI prompt).

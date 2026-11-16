@@ -41,6 +41,30 @@ model and no network once the embedding model has been downloaded;
 without the `static` extra it searches by words only. It never prunes
 on its own. Do not store secrets in it: the file is plain SQLite.
 
+### How the assistant knows to use it
+
+Once registered, the server tells the assistant what it is for when the
+session starts: recall at the start of a task, remember lasting
+preferences, facts and decisions, and report which memories were used.
+Each tool also carries its own description. That is usually enough for
+recall on request; for consistent use without being asked, add a few
+lines to your `CLAUDE.md` (`~/.claude/CLAUDE.md` for every project):
+
+```markdown
+## Memory
+- At the start of each task, call the myelin `recall` tool with what the
+  task is about, and again whenever earlier decisions might matter.
+- When I state a preference, a decision or a fact worth keeping, call
+  `remember` with one self-contained sentence.
+- After answering from recalled memories, call `mark_used` with the
+  numbers you relied on.
+- Never store passwords, keys or other secrets.
+```
+
+Agents that are not Claude Code can use the same server if they speak
+MCP, or call the Python client or the HTTP sidecar directly; in those
+cases the instructions above belong in the agent's system prompt.
+
 ## What's new in 1.5.0
 
 | Area | 1.4 | 1.5 |

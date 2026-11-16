@@ -1,6 +1,6 @@
 # LongMemEval-S baseline
 
-The starting point for the retrieval work: Myelin 1.4.0 plus the stability
+The starting point for the retrieval work: Myelin-AI 1.4.0 plus the stability
 fixes, default search, measured before any retrieval change.
 
 - **Benchmark:** LongMemEval-S, all 500 questions (`longmemeval_s_cleaned.json`,
@@ -36,13 +36,13 @@ questions have no evidence and are excluded, leaving 470.
 ## What this says
 
 - Finding *some* evidence is already easy; finding *all* of it is not. At
-  the default of 10 results Myelin reaches every evidence session for 80.9%
+  the default of 10 results Myelin-AI reaches every evidence session for 80.9%
   of questions, and 95.3% at 50. Retrieving more is the largest single lever.
 - The weak categories are multi-session (59.5) and preference (63.3)
   questions, where the evidence is spread out or phrased unlike the question.
 - BM25 is only 1.4 points ahead on the headline number, so swapping the
   scoring function alone will not move much. It is far ahead on speed:
-  Myelin's search re-reads and re-tokenizes every stored turn per query
+  Myelin-AI's search re-reads and re-tokenizes every stored turn per query
   (293 ms against 3 ms at about 500 turns).
 
 ## Answer accuracy

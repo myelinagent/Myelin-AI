@@ -11,7 +11,7 @@ project uses semantic versioning.
 ### Added
 
 - **`myelin-mcp`**: an MCP server over stdio, so an assistant such as
-  Claude Code can use Myelin as memory between sessions. Five tools:
+  Claude Code can use Myelin-AI as memory between sessions. Five tools:
   `remember`, `recall`, `mark_used`, `forget`, `memory_stats`. Standard
   library only; hybrid search when the `static` extra is installed.
   Memories default to `~/.myelin/memory.db`. Nothing is pruned

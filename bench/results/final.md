@@ -61,9 +61,9 @@ Checked against the sources' own pages on 2026-11-14.
 | MemMachine | 93.0 | gpt-5-mini / gpt-4o-mini |
 | Hindsight, paper | 91.4 | Gemini 3 Pro / GPT-OSS-120B |
 | Zep | 90.2 | gpt-5.4 / gpt-5.4 |
-| **Myelin** | **90.1** (eight runs: 90.7) | gpt-5-mini / gpt-4o |
+| **Myelin-AI** | **90.1** (eight runs: 90.7) | gpt-5-mini / gpt-4o |
 | Hindsight, paper | 89.0 | GPT-OSS-120B / GPT-OSS-120B |
-| **Myelin** | **88.6** | gpt-4o / gpt-4o |
+| **Myelin-AI** | **88.6** | gpt-4o / gpt-4o |
 | Mastra Observational Memory | 84.2 | gpt-4o / gpt-4o |
 | Zep, measured by Supermemory | 71.2 | gpt-4o / gpt-4o |
 | Mem0, MemOS leaderboard as quoted by EverMemOS | 66.4 | not stated |
@@ -72,7 +72,7 @@ Checked against the sources' own pages on 2026-11-14.
 |---|---:|
 | Zep | 94.7 (gpt-5.4 reader and judge); its own 2025 figure 75.1; 58.4 to 85.2 when measured by others |
 | EverMemOS | 93.1 (gpt-4.1-mini) |
-| **Myelin** | **92.6** (gpt-5-mini) |
+| **Myelin-AI** | **92.6** (gpt-5-mini) |
 | Mem0 | 92.5 (models not stated); its own 2025 paper 66.9; 61.0 to 64.2 when measured by others |
 | Hindsight | 92.0 on the vendor site (models not stated); paper 89.6 (Gemini 3 Pro), 85.7 (GPT-OSS-120B) |
 | MemMachine | 91.7 (gpt-4.1-mini); 87.5 to 88.1 (gpt-4o-mini) |
@@ -90,7 +90,7 @@ before relying on this.
 
 | System | Code | Paid offering | What the published score was run on |
 |---|---|---|---|
-| **Myelin** | MIT, all of it; runs locally on SQLite | none | this repository |
+| **Myelin-AI** | MIT, all of it; runs locally on SQLite | none | this repository |
 | Mem0 | Apache-2.0 library | hosted platform | vendor's own evaluation |
 | Zep | Graphiti engine is Apache-2.0; the self-hosted Zep Community Edition was retired in 2025 | Zep Cloud | Zep Cloud |
 | Mastra | Apache-2.0 framework, with some enterprise-licensed parts | Mastra Cloud and enterprise licence | the open framework's Observational Memory |
