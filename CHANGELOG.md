@@ -6,6 +6,18 @@ project uses semantic versioning.
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-11-16
+
+### Added
+
+- **`myelin-mcp`**: an MCP server over stdio, so an assistant such as
+  Claude Code can use Myelin as memory between sessions. Five tools:
+  `remember`, `recall`, `mark_used`, `forget`, `memory_stats`. Standard
+  library only; hybrid search when the `static` extra is installed.
+  Memories default to `~/.myelin/memory.db`. Nothing is pruned
+  automatically.
+- `MemoryClient.count()` and `MemoryClient.hybrid_search`.
+
 ## [1.5.0] — 2026-11-14
 
 Retrieval that an answering model can use directly, forgetting that

@@ -16,6 +16,31 @@ Requires Python 3.11+. The import name remains `myelin`.
 
 ---
 
+## Memory for Claude Code (1.5.1)
+
+`myelin-mcp` is an MCP server that gives an assistant memory that lasts
+between sessions.
+
+```bash
+pip install -U "myelin-ai[static]"
+claude mcp add --scope user myelin -- myelin-mcp
+```
+
+That registers it for every project, with memories in
+`~/.myelin/memory.db`. For a separate store per project, register it
+inside the project instead:
+
+```bash
+claude mcp add myelin -- myelin-mcp --db-path .myelin/memory.db
+```
+
+The assistant gets five tools: `remember`, `recall`, `mark_used` (which
+of the recalled memories its answer relied on, so useful ones rank
+higher next time), `forget` and `memory_stats`. The server needs no
+model and no network once the embedding model has been downloaded;
+without the `static` extra it searches by words only. It never prunes
+on its own. Do not store secrets in it: the file is plain SQLite.
+
 ## What's new in 1.5.0
 
 | Area | 1.4 | 1.5 |

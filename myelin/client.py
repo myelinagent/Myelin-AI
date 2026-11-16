@@ -1280,6 +1280,17 @@ class MemoryClient:
         """
         return self._backend.delete(memory_id)
 
+    def count(self, *, user_id: str | None = None) -> int:
+        """How many memories are stored for a user (this client's by
+        default), quarantined ones included."""
+        target = user_id or self._user_id
+        return len(self._backend.list_memories(user_id=target))
+
+    @property
+    def hybrid_search(self) -> bool:
+        """Whether search uses embeddings as well as words."""
+        return self._vectors_enabled()
+
     # ---- Mechanisms (2/7) ---------------------------------------
 
     def consolidate(

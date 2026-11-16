@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "myelin-ai"
-version = "1.5.0"
+version = "1.5.1"
 description = "Drop-in memory layer for AI agents — event-anchored facts, dream-synthesis consolidation, apoptosis forgetting, cite() outcome-conditioned learning, working-memory sessions, and a memory-aware multi-step agent orchestrator (OpenAI + Gemini)."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -94,6 +94,7 @@ Changelog = "https://github.com/myelinagent/Myelin-AI/blob/main/CHANGELOG.md"
 
 [project.scripts]
 myelin-serve = "myelin.serve.sidecar:main"
+myelin-mcp = "myelin.serve.mcp:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["myelin"]
