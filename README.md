@@ -353,10 +353,83 @@ given on the URL or in a header is whatever the caller says it is; only
 a per-agent token makes it trustworthy. Local (stdio) registrations are
 tagged with the name the client announces, or with `--source NAME`.
 
-What this does not do: rate limiting, token rotation without a restart,
-OAuth, or encryption of the file at rest. Anyone holding a token can
-read, add and delete that user's memories. Use a long random token, keep
-it out of chat, and rotate it by restarting with a new one.
+What this does not do: rate limiting, rotation of the fixed tokens
+above without a restart, a browser sign-in page, or encryption of the
+file at rest. Anyone holding a fixed token can read, add and delete that
+user's memories. Use a long random token, keep it out of chat, and
+rotate it by restarting with a new one. For identities you can add,
+limit and remove while the server runs, use OAuth bots, next.
+
+#### OAuth: one identity per bot
+
+With `--bots-file` the server is also a small OAuth authorization
+server. Each agent becomes a **bot** with its own client id and secret.
+It trades them for an access token that lasts an hour (OAuth's client
+credentials grant, the one meant for programs rather than people), and
+calls `/mcp` with that token. Compared with a fixed token:
+
+- the long-lived secret is sent only to the token endpoint, and what
+  travels with every request expires by itself;
+- the bot's name is the source on everything it stores, and the caller
+  cannot change it;
+- a bot can be **read-only**: it is offered `recall` and `memory_stats`
+  and refused the rest;
+- removing a bot from the file, or giving it a new secret, cuts it off
+  immediately, without a restart.
+
+Create bots, then start the server with the file:
+
+```bash
+myelin-mcp --add-bot codex --bots-file /var/lib/myelin/bots.json --user-id scott
+myelin-mcp --add-bot dashboard --bots-file /var/lib/myelin/bots.json --user-id scott --read-only
+myelin-mcp --http --bots-file /var/lib/myelin/bots.json --public-url https://memory.example.com
+```
+
+`--add-bot` prints the client secret once. The file keeps only its
+SHA-256, so the file alone does not let anyone sign in; it is still
+written readable by its owner only. Run `--add-bot` again with the same
+name to replace a secret. `--public-url` is the address agents use; the
+server publishes it so that clients can find the token endpoint.
+
+A client that implements MCP authorization needs only the server URL,
+the client id and the secret. It follows the `401` to
+`/.well-known/oauth-protected-resource`, reads
+`/.well-known/oauth-authorization-server`, and fetches its own token.
+With the official Python SDK:
+
+```python
+from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
+
+auth = ClientCredentialsOAuthProvider(
+    server_url="https://memory.example.com/mcp",
+    issuer="https://memory.example.com",
+    storage=my_token_storage,          # any object with the SDK's TokenStorage methods
+    client_id="codex",
+    client_secret=os.environ["MYELIN_BOT_SECRET"],
+)
+```
+
+Any other program can do the same with one request, then send the
+result as `Authorization: Bearer <access_token>`:
+
+```bash
+curl -s https://memory.example.com/oauth/token -u "codex:$MYELIN_BOT_SECRET" -d grant_type=client_credentials
+```
+
+The two scopes are `memory:read` (`recall`, `memory_stats`) and
+`memory:write` (`remember`, `mark_used`, `forget`). Tokens last
+`--token-seconds` (default 3600) and are held in memory, so a restart
+ends them and bots fetch new ones. Fixed tokens keep working beside
+bots, so you can move agents over one at a time.
+
+Limits to know about. This is the grant for programs that hold a
+secret; there is no authorization-code flow, so products that expect to
+send a person to a sign-in page (some hosted "custom connector" forms)
+cannot use it, and should use a fixed token until they can. Checked
+with the official MCP Python client; not checked against each agent
+product's own OAuth settings. Failed sign-ins are not rate limited,
+which is safe only because the generated secrets are long and random:
+do not replace them with ones you made up.
 
 Local tools can use the same server, which is one way to share a memory
 between machines:
@@ -539,10 +612,13 @@ volume. Avoid hosts without one (most "serverless" and free tiers).
 
 #### After it is up
 
-- Give each agent its own token with a `--tokens-file`, as described
-  under [one memory for all your agents](#cloud-agents-the-http-server),
-  so that one leaked token can be removed without changing the rest.
-- To rotate a token, change it where it is stored and restart the
+- Give each agent its own identity, so that one leak can be closed
+  without changing the rest. [OAuth bots](#oauth-one-identity-per-bot)
+  are the better way: add `--bots-file /var/lib/myelin/bots.json
+  --public-url https://your-host` to the start command, and removing or
+  re-issuing a bot takes effect at once. A `--tokens-file` with one
+  fixed token per agent also works.
+- To rotate a fixed token, change it where it is stored and restart the
   service; then update the agents that used it.
 - If a token leaks, rotate it first, then use `memory_stats` and
   `recall` to look for memories you did not write. Each one carries the

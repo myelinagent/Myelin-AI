@@ -360,7 +360,53 @@ def main(argv: list[str] | None = None) -> int:
         "--allow-origin", action="append", default=[],
         help="a browser origin allowed to call the server (repeatable); none by default",
     )
+    http.add_argument(
+        "--bots-file", default="",
+        help="JSON file of bots allowed to sign in with OAuth (client "
+        "credentials); create entries with --add-bot",
+    )
+    http.add_argument(
+        "--public-url", default="",
+        help="the https address callers use, e.g. https://memory.example.com; "
+        "published in the OAuth metadata",
+    )
+    http.add_argument(
+        "--token-seconds", type=int, default=3600,
+        help="how long an OAuth access token lasts (default 3600)",
+    )
+    bots = parser.add_argument_group("managing OAuth bots (does not start a server)")
+    bots.add_argument(
+        "--add-bot", default="", metavar="NAME",
+        help="add a bot to --bots-file for --user-id, or give an existing one "
+        "a new secret; prints the secret once",
+    )
+    bots.add_argument(
+        "--read-only", action="store_true",
+        help="with --add-bot: the bot may recall but not store, mark or forget",
+    )
     args = parser.parse_args(argv)
+
+    if args.add_bot:
+        from myelin.serve import mcp_oauth
+
+        if not args.bots_file:
+            parser.error("--add-bot needs --bots-file")
+        try:
+            issued = mcp_oauth.add_bot(
+                args.bots_file, args.add_bot, args.user_id, read_only=args.read_only
+            )
+        except mcp_oauth.BotsFileError as exc:
+            print(f"myelin-mcp: {exc}", file=sys.stderr)
+            return 2
+        may = "read only" if args.read_only else "read and write"
+        print(
+            f"Bot {args.add_bot} added for user {args.user_id} ({may}).\n"
+            f"  client id:     {args.add_bot}\n"
+            f"  client secret: {issued}\n"
+            "The secret is shown once and is not stored; only its hash is in "
+            f"{args.bots_file}. Run this again to replace it."
+        )
+        return 0
 
     # Only protocol messages may reach stdout; anything a library prints
     # goes to stderr.
@@ -385,6 +431,8 @@ def main(argv: list[str] | None = None) -> int:
             return mcp_http.run(
                 client, host=args.host, port=args.port, user_id=args.user_id,
                 tokens_file=args.tokens_file, allowed_origins=args.allow_origin,
+                bots_file=args.bots_file, public_url=args.public_url,
+                token_seconds=args.token_seconds,
             )
         serve(
             MemoryServer(client, db_path=db_path, source=args.source or None),
