@@ -142,7 +142,7 @@ hidden reasoning. All 500 questions, one run each, 2026-11-14.
   from 81.2 to 78.2, inside the noise of 133 questions.
 - **Perfect retrieval gives 93.4**, the same ceiling as `gpt-4o` (93.6).
   So about 6 points of the benchmark are beyond this prompt whatever is
-  retrieved, and Myelin is 4.2 points under its own ceiling. That gap is
+  retrieved, and Myelin-AI is 4.2 points under its own ceiling. That gap is
   in multi-session (78.2 against 86.5), preference (83.3 against 90.0) and
   temporal (90.2 against 95.5) questions.
 - No answer was empty; one of 500 reached the 4,000-token cap.

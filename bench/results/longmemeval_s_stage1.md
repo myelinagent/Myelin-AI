@@ -42,7 +42,7 @@ By question type, all evidence in the top 10:
 
 - Ten points of the gap closed: 80.9 to 90.9. About half came from better
   ranking and half from handing over more context.
-- Stemming is what lifted Myelin above the plain BM25 control at the same
+- Stemming is what lifted Myelin-AI above the plain BM25 control at the same
   depth (86.0 against 82.3 at 10): it matches "graduate" to "graduated".
 - Search is about 40 times faster at this store size (293 ms to 7 ms).
 - Temporal-reasoning recall did not move. Those questions need date

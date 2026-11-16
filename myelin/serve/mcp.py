@@ -1,4 +1,4 @@
-"""MCP server: Myelin as long-term memory for an assistant such as Claude Code.
+"""MCP server: Myelin-AI as long-term memory for an assistant such as Claude Code.
 
     myelin-mcp                         # memories in ~/.myelin/memory.db
     myelin-mcp --db-path ./memory.db   # one store per project
@@ -277,7 +277,7 @@ def _embedder() -> Any:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="myelin-mcp", description="Myelin memory as an MCP server over stdio."
+        prog="myelin-mcp", description="Myelin-AI memory as an MCP server over stdio."
     )
     parser.add_argument(
         "--db-path", default=DEFAULT_DB_PATH,

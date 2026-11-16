@@ -13,7 +13,7 @@ The judge is `gpt-4o-mini` with the prompt from Mem0's evaluation code,
 which is what published LoCoMo "LLM-judge" scores use. One run each,
 2026-11-14.
 
-## Answer accuracy (Myelin, hybrid search)
+## Answer accuracy (Myelin-AI, hybrid search)
 
 | | Questions | `gpt-4o-mini` answering | `gpt-5-mini` answering |
 |---|---:|---:|---:|
@@ -31,7 +31,7 @@ One standard error on the overall figure is about 1 point (0.8 at 89%).
 Share of questions whose every evidence utterance is in the 6,000-token
 context, and the mean share of evidence utterances shown.
 
-| | BM25 control | Myelin, lexical | Myelin, hybrid |
+| | BM25 control | Myelin-AI, lexical | Myelin-AI, hybrid |
 |---|---:|---:|---:|
 | All evidence utterances in context | 71.2 | 76.9 | 80.3 |
 | Share of evidence utterances in context | 78.4 | 83.2 | 86.9 |

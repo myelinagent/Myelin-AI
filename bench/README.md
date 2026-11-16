@@ -2,7 +2,7 @@
 
 Runs a memory system through a benchmark from one command, with no UI and no
 prompts. It lives outside the `myelin` package and has no dependencies beyond
-Myelin itself.
+Myelin-AI itself.
 
 ## LongMemEval
 
@@ -88,7 +88,7 @@ The sections below apply to both runners.
 
 | `--system` | What it is |
 |---|---|
-| `myelin` | Myelin as shipped: one memory per turn, default `search()` ranking |
+| `myelin` | Myelin-AI as shipped: one memory per turn, default `search()` ranking |
 | `bm25` | Control: textbook BM25 over the same turns |
 | `oracle` | Control: the answerer is handed exactly the evidence sessions (reader ceiling) |
 
