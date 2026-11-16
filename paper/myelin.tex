@@ -16,7 +16,7 @@
   frame=single,framesep=4pt,xleftmargin=6pt,xrightmargin=6pt,
   showstringspaces=false}
 
-\title{Myelin: A Small Memory Layer for Language Agents\\
+\title{Myelin-AI: A Small Memory Layer for Language Agents\\
 That Dates Its Facts, Learns From Use, and Forgets Reversibly}
 \author{Scott Benson\\Apex Insights}
 \date{DRAFT --- November 2026}
@@ -25,7 +25,7 @@ That Dates Its Facts, Learns From Use, and Forgets Reversibly}
 \maketitle
 
 \begin{abstract}
-Myelin is an open-source memory layer for language agents: a Python
+\mbox{Myelin-AI} is an open-source memory layer for language agents: a Python
 library over one SQLite file, with no required dependencies and no
 model of its own. It stores each message or fact with the time from
 which it holds, retrieves with BM25 and optional CPU-only embeddings,
@@ -34,7 +34,7 @@ that most retrieval stores do not: which memories answers actually
 used, how memories relate to one another, and a single health grade
 from which forgetting is decided. Forgetting removes a memory from
 search and keeps it in the store, so it can be undone. With a
-6{,}000-token context Myelin scores 90.1\% on LongMemEval-S
+6{,}000-token context \mbox{Myelin-AI} scores 90.1\% on LongMemEval-S
 (\texttt{gpt-5-mini}, mean of four runs; 88.6\% with \texttt{gpt-4o})
 and 92.6\% on LoCoMo, within the range that published systems report,
 with median retrieval latency of 30\,ms at 50{,}000 memories. We
@@ -56,8 +56,11 @@ store with a similarity search in front of it. That handles the first
 need and none of the others: every item is equally current, nothing is
 learned from which results were useful, and the store only grows.
 
-Myelin is a library that takes those needs as its design brief while
-staying small enough to embed. It has four commitments.
+\mbox{Myelin-AI} is a library that takes those needs as its design brief while
+staying small enough to embed. (The name borrows from the myelin sheath
+that speeds signals along frequently used nerve fibres; we write
+\mbox{Myelin-AI} throughout to keep the software distinct from the
+biology.) It has four commitments.
 
 \begin{itemize}
 \item \textbf{Facts carry time.} Every memory has a time from which it
@@ -96,7 +99,7 @@ notes to one another, and Hindsight \citep{hindsight2025} and Mastra's
 observational memory \citep{mastra2026om} organise what is retained
 around model-written observations.
 
-Myelin differs mainly in what it leaves out. It makes no model call on
+\mbox{Myelin-AI} differs mainly in what it leaves out. It makes no model call on
 the write path unless asked, stores what was said and not a rewrite of
 it, and keeps its state in ordinary SQL tables. Its health grade is in
 the tradition of base-level and spreading activation in ACT-R
@@ -133,7 +136,7 @@ One fusion did not serve both the top of the list and its depth.
 Weighting the vector ranking double put the most evidence inside a
 6{,}000-token context on LongMemEval-S, and was worse than lexical
 search alone in the top ten on LoCoMo's short messages (39.6\% of
-questions with all evidence in the top ten, against 54.9\%). Myelin
+questions with all evidence in the top ten, against 54.9\%). \mbox{Myelin-AI}
 orders the first 20 results by an equal-weight fusion with a small
 rank constant and the rest by the vector-heavy one. That gave 51.8\%
 in the top ten on LoCoMo and left LongMemEval-S unchanged.
@@ -159,7 +162,7 @@ history does not cover.
 per conversation to extract short dated facts (``Ana adopted a dog on
 2023-05-19'') and indexes them with the messages they came from. The
 message remains what is stored and shown; the fact is a second way to
-find it. This is the only model call Myelin can make on the write
+find it. This is the only model call \mbox{Myelin-AI} can make on the write
 path, and it is off by default.
 
 \subsection{Feedback from use}
@@ -389,7 +392,7 @@ decay reaches it. Use can protect only what has been used. Part of the
 measured cost may be correct behaviour, since most affected questions
 concern a value that changed and the labels count the superseded turn
 as needed; we did not measure answers. Either way, an application
-whose users ask about old, never-revisited details should run Myelin
+whose users ask about old, never-revisited details should run \mbox{Myelin-AI}
 with quarantine disabled or with a slower decay, and this is the main
 open problem in the design.
 
@@ -418,7 +421,7 @@ open problem in the design.
 
 \section{Conclusion}
 
-Myelin shows that a memory layer can be small, model-free on its write
+\mbox{Myelin-AI} shows that a memory layer can be small, model-free on its write
 path and auditable, and still sit in the range of published results on
 the standard benchmarks. Its more distinctive parts (feedback from
 use, relationships, and reversible forgetting from one grade) are

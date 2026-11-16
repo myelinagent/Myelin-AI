@@ -25,12 +25,12 @@ benchmarks that load a fixed history and ask each question once. A
 memory that lives with an agent for months does three things those
 benchmarks cannot observe: it forgets, it learns from use which
 memories matter, and it is asked about the same facts again. We
-describe a small open-source memory system, Myelin, and LongHAUL
+describe a small open-source memory system, \mbox{Myelin-AI}, and LongHAUL
 (Long-horizon Assessment of Use and Loss), a longitudinal evaluation
 protocol that replays long conversations on a simulated
 clock, asks each question some sessions after its evidence and
 optionally again later, and scores retrieval without any language
-model. On two standard benchmarks Myelin scores 90.1\% (LongMemEval-S,
+model. On two standard benchmarks \mbox{Myelin-AI} scores 90.1\% (LongMemEval-S,
 \texttt{gpt-5-mini}, mean of four runs) and 92.6\% (LoCoMo), in the
 range that published systems report; several mechanisms we added moved
 those scores by less than their run-to-run spread. Under the
@@ -92,7 +92,7 @@ Our contributions are:
   (Section~\ref{sec:protocol}): replay on a simulated clock, lagged and
   revisited questions, and three model-free measures (evidence in the
   top $k$, needed-but-hidden, and store still searchable).
-\item A description of Myelin (Section~\ref{sec:system}), an MIT-licensed
+\item A description of \mbox{Myelin-AI} (Section~\ref{sec:system}), an MIT-licensed
   memory library on SQLite, with the measurements that led to each
   design choice, including the ones that were rejected.
 \item Results under the protocol (Section~\ref{sec:results}) that
@@ -130,7 +130,7 @@ outweigh any amount of use.
 \section{The system}
 \label{sec:system}
 
-Myelin stores one memory per message or fact in a single SQLite file.
+\mbox{Myelin-AI} stores one memory per message or fact in a single SQLite file.
 A memory has text, a time from which it is valid, an optional time
 from which it is not, metadata, and counters for how it has been used.
 
@@ -142,7 +142,7 @@ A single fusion did not serve both the top of the list and its depth:
 weighting the vector ranking double found the most evidence within a
 6{,}000-token context on LongMemEval-S but was worse than lexical
 search alone in the top ten on LoCoMo's short messages (39.6\% of
-questions with all evidence in the top ten, against 54.9\%). Myelin
+questions with all evidence in the top ten, against 54.9\%). \mbox{Myelin-AI}
 orders the first 20 results by an equal-weight fusion with a small rank
 constant and the rest by the vector-heavy one, which matched the better
 of the two at every depth measured (51.8\% in the top ten on LoCoMo,
@@ -270,7 +270,7 @@ down memories that keep being retrieved and not used.
 \label{sec:static}
 
 Table~\ref{tab:static} gives accuracy on the two static benchmarks.
-All Myelin runs use a 6{,}000-token context. LongMemEval-S is judged
+All \mbox{Myelin-AI} runs use a 6{,}000-token context. LongMemEval-S is judged
 by \texttt{gpt-4o} with the benchmark's prompts; LoCoMo by
 \texttt{gpt-4o-mini} with the prompt that published scores use.
 
@@ -289,7 +289,7 @@ LoCoMo & Final, facts indexed, \texttt{gpt-5-mini} (one run) & 92.6 \\
  & Final, no facts, \texttt{gpt-5-mini} (one run) & 89.0 \\
 \bottomrule
 \end{tabular}
-\caption{Myelin on static benchmarks (\%). ``Evidence sessions given
+\caption{\mbox{Myelin-AI} on static benchmarks (\%). ``Evidence sessions given
 directly'' is a control that bypasses retrieval.}
 \label{tab:static}
 \end{table}
