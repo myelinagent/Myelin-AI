@@ -2,7 +2,7 @@
 
 Two drafts for arXiv that cite each other.
 
-- `main.tex` / `main.pdf` (11 pages): LongHAUL, the memory-over-time
+- `main.tex` / `main.pdf` (12 pages): LongHAUL, the memory-over-time
   evaluation protocol, and the case for longitudinal benchmarks of agent memory.
 - `myelin.tex` / `myelin.pdf` (8 pages): the system itself, its design,
   interface, benchmark results, cost, and where it fails. Its numbers
