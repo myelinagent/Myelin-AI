@@ -403,15 +403,23 @@ class GraphitiAdapter(Adapter):
 
         items = []
         for turn_id, turn in batch:
-            added = self._run(
-                self._graph.add_episode(
-                    name=turn_id,
-                    episode_body=turn.text,
-                    source=EpisodeType.message,
-                    source_description="conversation",
-                    reference_time=turn.session_date,
-                )
-            )
+            for attempt in range(3):
+                # A model reply Graphiti cannot parse raises before the
+                # episode is saved, so the write can simply be made again.
+                try:
+                    added = self._run(
+                        self._graph.add_episode(
+                            name=turn_id,
+                            episode_body=turn.text,
+                            source=EpisodeType.message,
+                            source_description="conversation",
+                            reference_time=turn.session_date,
+                        )
+                    )
+                    break
+                except ValueError:  # pydantic's ValidationError is one
+                    if attempt == 2:
+                        raise
             self._turn_of[added.episode.uuid] = turn_id
             items += [self._item(edge) for edge in added.edges]
         return items
