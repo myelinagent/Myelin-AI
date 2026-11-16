@@ -1,6 +1,9 @@
 """Turn generated conversations into training pairs.
 
-    python -m bench.embedder.pairs CONVERSATIONS_DIR --out pairs/
+    python -m bench.embedder.pairs bench/embedder/data/conversations.jsonl.gz --out pairs/
+
+The input is a directory of conversation files or a ``.jsonl.gz`` with
+one conversation per line.
 
 Writes ``train.jsonl`` and ``val.jsonl``. Each line is one question
 with one turn that answers it and some turns from the same conversation
@@ -23,6 +26,7 @@ validation questions are about people the model has not seen.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import random
 from pathlib import Path
@@ -65,9 +69,32 @@ def pairs_from(conversation: dict[str, Any], embedder: Any, negatives: int) -> l
     return out
 
 
+def read_conversations(source: str) -> tuple[list[dict[str, Any]], int]:
+    """The valid conversations in a directory or a ``.jsonl.gz``, and how
+    many were left out for failing ``bench.embedder.validate``."""
+    path = Path(source)
+    if path.is_dir():
+        raw = [file.read_text() for file in sorted(path.glob("c*.json"))]
+    else:
+        with gzip.open(path, "rt") as handle:
+            raw = [line for line in handle if line.strip()]
+    kept, skipped = [], 0
+    for text in raw:
+        try:
+            loaded = json.loads(text)
+        except json.JSONDecodeError:
+            skipped += 1
+            continue
+        if problems(loaded):
+            skipped += 1
+            continue
+        kept.append(loaded)
+    return kept, skipped
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("directory")
+    parser.add_argument("directory", help="directory of c*.json files, or a .jsonl.gz")
     parser.add_argument("--out", required=True)
     parser.add_argument("--negatives", type=int, default=5)
     parser.add_argument("--val-share", type=float, default=0.1)
@@ -77,17 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     from myelin.embedders import StaticEmbedder
 
     embedder = StaticEmbedder()
-    conversations, skipped = [], 0
-    for file in sorted(Path(args.directory).glob("c*.json")):
-        try:
-            loaded = json.loads(file.read_text())
-        except json.JSONDecodeError:
-            skipped += 1
-            continue
-        if problems(loaded):
-            skipped += 1
-            continue
-        conversations.append(loaded)
+    conversations, skipped = read_conversations(args.directory)
     random.Random(args.seed).shuffle(conversations)
     held = max(1, round(len(conversations) * args.val_share))
     out = Path(args.out)
@@ -99,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
         print(f"{name}: {len(part)} conversations, {len(rows)} pairs")
     if skipped:
-        print(f"skipped {skipped} files that do not pass bench.embedder.validate")
+        print(f"skipped {skipped} conversations that do not pass bench.embedder.validate")
     return 0
 
 
