@@ -532,6 +532,63 @@ related to useful memories was a reason to keep a memory, not a reason
 to rank it higher for a particular question. Adding the conversational
 neighbours of top results to the context did not reliably help.
 
+\subsection{Other systems on the static arm}
+\label{sec:others}
+
+The static arm needs nothing from a system except writing and search,
+so it can be run on any of them. We ran it through the open-source
+releases of Mem0, Graphiti and Letta on the first three LoCoMo
+conversations (1{,}451 turns, 382 questions, three schedules), with
+\mbox{Myelin-AI} on the same questions (Table~\ref{tab:others}). Every
+system ranked with the same static embedder; Mem0 and Graphiti
+extracted with \texttt{gpt-4o-mini}. These systems return facts, graph
+edges or passages, not turns, so an evidence turn counts as retrieved
+when a returned item derives from it, and $k$ counts returned items.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+ & \multicolumn{3}{c}{All evidence in} & Model calls & Cost \\
+ & top 5 & top 10 & top 20 & to write & to write \\
+\midrule
+\mbox{Myelin-AI}, static arm & 47.6 & 57.9 & 67.5 & 0 & \$0 \\
+Mem0, one write per turn & 48.7 & 62.6 & 71.6 & 1{,}451 & \$1.14 \\
+\quad also crediting a restated earlier turn & 60.0 & 68.2 & 75.5 & & \\
+Graphiti, one episode per turn & 48.4 & 54.5 & 58.9 & 4{,}839 & \$1.68 \\
+Letta archival passages, no agent & 31.1 & 39.8 & 47.6 & 0 & \$0 \\
+\midrule
+\mbox{Myelin-AI}, feedback arm & 53.3 & 63.4 & 67.4 & 0 & \$0 \\
+\bottomrule
+\end{tabular}
+\caption{LongHAUL's static arm on three LoCoMo conversations (\%,
+mean of three schedules; spreads are at most 1.1 points). Graphiti ran
+on its Kuzu backend. Letta's passages were inserted directly; its
+agent, sent the turns as messages, stored nothing to rank.}
+\label{tab:others}
+\end{table}
+
+Three things follow. First, Mem0 retrieves at least as much of the
+evidence as \mbox{Myelin-AI}'s static arm: level in the top 5 and four
+to five points ahead deeper, by the mapping the run recorded. That
+mapping undercounts Mem0, because its extraction model sees the
+preceding messages and often files a fact under a later turn than the
+one that states it; crediting the earlier turn when the memory's
+wording matches it better puts Mem0 eight to twelve points ahead. The
+truth lies between the two rows. Mem0 pays for this with one model
+call and about 8{,}400 prompt tokens per turn, and an hour of writing
+against two seconds. Second, the embedder mattered more than the
+system. With \texttt{text-embedding-3-small} in place of the static
+embedder, \mbox{Myelin-AI}'s static arm rose from 47.6 to 62.8 in the
+top 5, Letta's passages from 31.1 to 62.7, and Mem0 by the recorded
+mapping to 57.5 (65.1 by the lenient one): plain vector search over
+raw turns then equals our hybrid search. Third, none of the other
+systems has an arm beyond this one. Feedback moves \mbox{Myelin-AI}
+from 47.6 to 53.3 in the top 5 at no model cost, which is the kind of
+difference the protocol exists to show, but it does not make
+\mbox{Myelin-AI} the best retriever in the table.
+
 \section{Why a longitudinal benchmark is needed}
 
 The argument does not depend on our system. Any memory that forgets,
@@ -592,14 +649,17 @@ properties of a trajectory. A benchmark should have one.
 \item \textbf{Tuning.} The health weights were chosen on five
   conversations and checked on the other five of the same benchmark.
   That guards against fitting noise, not against fitting the dataset.
-\item \textbf{Comparisons.} We did not run other systems. Published
-  figures are quoted as their authors report them. From their current
-  packages and documentation, the open-source releases of Mem0,
-  Graphiti (Zep) and Letta have neither age-based forgetting nor use
-  feedback that can be driven on a simulated clock, so only the static
-  arm could be compared, with an adapter mapping returned items back
-  to source turns. We estimate that at one to two weeks and have not
-  done it.
+\item \textbf{Comparisons.} Other systems were run on the static arm
+  only, on three of the ten conversations, with one extraction model
+  that is not either system's default and one message per write, which
+  was our choice (Section~\ref{sec:others}). Tracing a returned fact
+  back to its source turn is imperfect, and for Mem0 the two ways we
+  did it differ by up to eleven points. Graphiti ran on a backend its
+  authors have deprecated, and Letta only as a passage store. From
+  their packages and documentation, none of the three has age-based
+  forgetting or use feedback that can be driven on a simulated clock,
+  so the other arms could not be compared. Other published figures are
+  quoted as their authors report them.
 \item \textbf{Scale.} Stores here hold hundreds of memories. Separate
   timing on synthetic text shows retrieval latency growing linearly to
   about 45\,ms (lexical) and 83\,ms (hybrid) at 200{,}000 memories; the
