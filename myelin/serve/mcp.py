@@ -6,7 +6,8 @@
 Speaks the Model Context Protocol over stdio (one JSON-RPC message per
 line), using only the standard library. Five tools:
 
-* ``remember``   store something worth keeping
+* ``remember``   store something worth keeping (tagged with the agent
+  it came from, shown again by ``recall``)
 * ``recall``     the best-matching memories that fit a token budget
 * ``mark_used``  say which recalled memories the answer relied on
 * ``forget``     delete one memory
@@ -126,6 +127,14 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+def clean_source(name: Any) -> str | None:
+    """A short label for the agent a memory came from, or None."""
+    if not isinstance(name, str):
+        return None
+    label = "".join(c if c.isalnum() or c in "-_." else "-" for c in name.strip().lower())
+    return label.strip("-")[:40] or None
+
+
 class ToolError(Exception):
     """A tool call that cannot be carried out; reported to the model."""
 
@@ -134,12 +143,24 @@ class MemoryServer:
     """The tools, over one :class:`MemoryClient`."""
 
     def __init__(
-        self, client: MemoryClient, *, db_path: str | None = None, user_id: str | None = None
+        self,
+        client: MemoryClient,
+        *,
+        db_path: str | None = None,
+        user_id: str | None = None,
+        source: str | None = None,
+        adopt_client_name: bool = True,
     ) -> None:
         self.client = client
         self.db_path = db_path
         # Whose memories these tools read and write; None is the client's own.
         self.user_id = user_id
+        # Which agent is writing, recorded on each memory it stores. When
+        # not given, the name the client announces at initialize is used.
+        self.source = clean_source(source)
+        # Over stdio one client owns the connection, so its name can stand
+        # in for a missing label. Over HTTP many clients share these tools.
+        self._adopt_client_name = adopt_client_name
         self._recalls: OrderedDict[str, tuple[str, list[SearchResult]]] = OrderedDict()
         self._lock = threading.Lock()
 
@@ -152,7 +173,12 @@ class MemoryServer:
         importance = float(args.get("importance", 0.5))
         if not 0.0 <= importance <= 1.0:
             raise ToolError("importance must be between 0 and 1")
-        memory = self.client.add(content, importance=importance, user_id=self.user_id)
+        memory = self.client.add(
+            content,
+            importance=importance,
+            user_id=self.user_id,
+            metadata={"source": self.source} if self.source else None,
+        )
         return f"Remembered (id {memory.id})."
 
     def recall(self, args: dict[str, Any]) -> str:
@@ -169,7 +195,11 @@ class MemoryServer:
             self._recalls[recall_id] = (query, hits)
             while len(self._recalls) > RECALLS_KEPT:
                 self._recalls.popitem(last=False)
-        ids = "\n".join(f"[{n}] {hit.memory.id}" for n, hit in enumerate(hits, start=1))
+        ids = "\n".join(
+            f"[{n}] {hit.memory.id}"
+            + (f" (from {origin})" if (origin := (hit.memory.metadata or {}).get("source")) else "")
+            for n, hit in enumerate(hits, start=1)
+        )
         return (
             f"{format_context(hits, numbered=True)}\n\n"
             f"Memory ids:\n{ids}\n\n"
@@ -218,6 +248,8 @@ class MemoryServer:
         params = message.get("params") or {}
         try:
             if method == "initialize":
+                if self.source is None and self._adopt_client_name:
+                    self.source = clean_source((params.get("clientInfo") or {}).get("name"))
                 asked = params.get("protocolVersion")
                 version = asked if asked in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
                 result: dict[str, Any] = {
@@ -307,6 +339,11 @@ def main(argv: list[str] | None = None) -> int:
         "--no-embedder", action="store_true",
         help="lexical search only, even if the static extra is installed",
     )
+    parser.add_argument(
+        "--source", default="",
+        help="label recorded on each memory this agent stores (default: the "
+        "name the connecting client announces)",
+    )
     http = parser.add_argument_group("serving over HTTP instead of stdio")
     http.add_argument(
         "--http", action="store_true",
@@ -349,7 +386,10 @@ def main(argv: list[str] | None = None) -> int:
                 client, host=args.host, port=args.port, user_id=args.user_id,
                 tokens_file=args.tokens_file, allowed_origins=args.allow_origin,
             )
-        serve(MemoryServer(client, db_path=db_path), sys.stdin, protocol_out)
+        serve(
+            MemoryServer(client, db_path=db_path, source=args.source or None),
+            sys.stdin, protocol_out,
+        )
     finally:
         client.close()
     return 0

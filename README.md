@@ -333,6 +333,25 @@ connecting product's settings.
 | No token | the server starts only on `127.0.0.1`, for local testing; it will not start open to the network |
 | Health check | `GET /health` (no token, reveals nothing) |
 
+**One memory for all your agents.** Point every agent at the same
+server as the same user and they share one memory: what Codex stores,
+Claude Code can recall. Each memory records which agent stored it, and
+`recall` shows it as `(from codex)`. Tell the server who is calling in
+one of three ways:
+
+- a token per agent, all naming you, in the tokens file:
+  `{"<token A>": {"user": "scott", "source": "claude-code"},
+  "<token B>": {"user": "scott", "source": "codex"}}`. This also lets
+  you cut off one agent by removing its token;
+- `?source=codex` on the URL, e.g. `https://your-host/mcp?source=codex`;
+- an `X-Myelin-Source: codex` header.
+
+The label is a record of where a memory came from, not a filter: every
+agent can still recall, mark and forget all of your memories. A source
+given on the URL or in a header is whatever the caller says it is; only
+a per-agent token makes it trustworthy. Local (stdio) registrations are
+tagged with the name the client announces, or with `--source NAME`.
+
 What this does not do: rate limiting, token rotation without a restart,
 OAuth, or encryption of the file at rest. Anyone holding a token can
 read, add and delete that user's memories. Use a long random token, keep

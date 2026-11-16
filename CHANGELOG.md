@@ -16,6 +16,12 @@ project uses semantic versioning.
   required on any non-loopback address, sent as a bearer header or as
   `/mcp/<token>`; each token sees only its own user's memories. Standard
   library only. It does not terminate HTTPS.
+- **Source tags**: each memory stored through the MCP server records
+  which agent stored it (`metadata["source"]`), and `recall` shows it.
+  Over stdio the label is `--source` or the client's announced name;
+  over HTTP it is fixed per token in the tokens file, or given as
+  `?source=` or an `X-Myelin-Source` header. Several agents sharing one
+  user's token share one memory.
 - `MemoryClient.user_id`.
 
 ### Changed

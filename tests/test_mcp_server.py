@@ -179,3 +179,23 @@ def test_tools_are_scoped_to_one_user():
         assert _call(ana, "forget", memory_id=memory_id) == ("Forgotten.", False)
     finally:
         client.close()
+
+
+def test_memories_are_tagged_with_the_agent_that_stored_them():
+    client = MemoryClient(user_id="t")
+    try:
+        named = mcp.MemoryServer(client, source="My Agent!")
+        assert named.source == "my-agent"
+        _request(named, "initialize", {"clientInfo": {"name": "claude-code"}})
+        assert named.source == "my-agent"  # an explicit label wins
+
+        announced = mcp.MemoryServer(client)
+        _call(announced, "remember", content="Stored before any client name is known.")
+        _request(announced, "initialize", {"clientInfo": {"name": "Claude Code", "version": "2"}})
+        _call(announced, "remember", content="Stored after the client introduced itself.")
+        text, _ = _call(announced, "recall", query="stored client")
+        ids = text.split("Memory ids:\n")[1].split("\n\n")[0].splitlines()
+        assert sum("(from claude-code)" in line for line in ids) == 1
+        assert sum("(from" not in line for line in ids) == 1
+    finally:
+        client.close()

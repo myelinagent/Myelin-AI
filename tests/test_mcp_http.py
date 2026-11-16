@@ -14,6 +14,7 @@ from myelin.serve import mcp_http
 
 ANA = "ana-token-0123456789abcdef"
 BEN = "ben-token-0123456789abcdef"
+ANA_CODEX = "ana-codex-token-0123456789"
 
 
 @pytest.fixture
@@ -21,7 +22,8 @@ def served():
     """A running server with two users; yields its base URL."""
     client = MemoryClient(user_id="shared", cite_learning=True)
     server = mcp_http.MemoryHTTPServer(
-        ("127.0.0.1", 0), client, tokens={ANA: "ana", BEN: "ben"}, default_user="shared",
+        ("127.0.0.1", 0), client, tokens={ANA: ("ana", None), BEN: ("ben", None), ANA_CODEX: ("ana", "codex")},
+        default_user="shared",
         allowed_origins=["https://app.example"],
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -48,9 +50,9 @@ def _send(url, body=None, *, token=None, method="POST", headers=None, raw=None):
         return error.code, json.loads(text) if text else None, error.headers
 
 
-def _tool(url, token, name, **arguments):
+def _tool(url, token, name, _query="", **arguments):
     status, reply, _ = _send(
-        url + "/mcp",
+        url + "/mcp" + _query,
         {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
          "params": {"name": name, "arguments": arguments}},
         token=token,
@@ -149,7 +151,7 @@ def test_it_will_not_start_open_to_the_network():
         local = mcp_http.MemoryHTTPServer(
             ("127.0.0.1", 0), client, tokens={}, default_user="shared"
         )
-        assert local.user_for(None) == "shared"
+        assert local.grant_for(None) == ("shared", None)
         local.server_close()
         assert mcp_http.run(client, host="0.0.0.0", port=0, user_id="shared") == 2
     finally:
@@ -158,13 +160,18 @@ def test_it_will_not_start_open_to_the_network():
 
 def test_tokens_come_from_the_environment_and_a_file(tmp_path, monkeypatch):
     monkeypatch.setenv("MYELIN_MCP_TOKEN", "solo-token-0123456789")
-    assert mcp_http.load_tokens("", "scott") == {"solo-token-0123456789": "scott"}
+    assert mcp_http.load_tokens("", "scott") == {"solo-token-0123456789": ("scott", None)}
 
     monkeypatch.delenv("MYELIN_MCP_TOKEN")
     assert mcp_http.load_tokens("", "scott") == {}
     path = tmp_path / "tokens.json"
-    path.write_text(json.dumps({ANA: "ana", BEN: "ben"}))
-    assert mcp_http.load_tokens(str(path), "scott") == {ANA: "ana", BEN: "ben"}
+    path.write_text(json.dumps({ANA: "ana", BEN: {"user": "ben", "source": "Claude Code"}}))
+    assert mcp_http.load_tokens(str(path), "scott") == {
+        ANA: ("ana", None), BEN: ("ben", "claude-code"),
+    }
+    path.write_text(json.dumps({ANA: {"source": "codex"}}))
+    with pytest.raises(mcp_http.ConfigError, match="each tokens file entry"):
+        mcp_http.load_tokens(str(path), "scott")
 
     path.write_text(json.dumps({"short": "ana"}))
     with pytest.raises(mcp_http.ConfigError, match="shorter than"):
@@ -174,3 +181,32 @@ def test_tokens_come_from_the_environment_and_a_file(tmp_path, monkeypatch):
         mcp_http.load_tokens(str(path), "scott")
     with pytest.raises(mcp_http.ConfigError, match="cannot read"):
         mcp_http.load_tokens(str(tmp_path / "missing.json"), "scott")
+
+
+def test_agents_share_one_memory_and_each_memory_says_where_it_came_from(served):
+    # Three agents for the same person: one token carries its source, one
+    # says it on the URL, one in a header.
+    _tool(served, ANA_CODEX, "remember", content="The API keys rotate every quarter.")
+    _tool(served, ANA, "remember", _query="?source=Claude%20Code",
+          content="The API gateway is called turnstile.")
+    status, _, _ = _send(
+        served + "/mcp",
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+         "params": {"name": "remember", "arguments": {"content": "API docs live in the wiki."}}},
+        token=ANA, headers={"X-Myelin-Source": "hermes"},
+    )
+    assert status == 200
+
+    text, _ = _tool(served, ANA, "recall", query="API")
+    assert "rotate every quarter" in text and "turnstile" in text and "wiki" in text
+    listed = text.split("Memory ids:\n")[1].split("\n\n")[0]
+    assert sorted(line.split("(from ")[1].rstrip(")") for line in listed.splitlines()) == [
+        "claude-code", "codex", "hermes",
+    ]
+    # A token that fixes its source cannot be relabelled by the caller.
+    _tool(served, ANA_CODEX, "remember", _query="?source=someone-else",
+          content="The API changelog is weekly.")
+    text, _ = _tool(served, ANA, "recall", query="API changelog weekly")
+    assert "(from someone-else)" not in text
+    # Still nothing for another person.
+    assert _tool(served, BEN, "recall", query="API")[0] == "No memories match."
