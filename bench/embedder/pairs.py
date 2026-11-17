@@ -13,7 +13,7 @@ that do not::
      "conversation": "c0001", "kind": "fact"}
 
 A turn is written as ``Speaker: text``, which is how the benchmark
-stores one. The wrong turns are the ones the current static embedder
+stores one; in a conversation of kind ``notes`` it is the note alone. The wrong turns are the ones the current static embedder
 ranks highest for the question, since those are the mistakes a better
 embedder has to stop making. Turns next to an evidence turn are left
 out of them: a neighbour often half-answers the question, and teaching
@@ -45,7 +45,10 @@ def pairs_from(conversation: dict[str, Any], embedder: Any, negatives: int) -> l
     for session in conversation["sessions"]:
         for turn in session["turns"]:
             ids.append(turn["id"])
-            texts.append(f"{turn['speaker']}: {turn['text']}")
+            # An agent's saved note is stored as written; a message in a
+            # conversation is stored with who said it.
+            notes = conversation.get("kind") == "notes"
+            texts.append(turn["text"] if notes else f"{turn['speaker']}: {turn['text']}")
     position = {turn_id: index for index, turn_id in enumerate(ids)}
     vectors = embedder.encode_batch(texts)
     asked = [q["question"] for q in conversation["questions"]]
