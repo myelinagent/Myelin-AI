@@ -2,8 +2,8 @@
 
     python -m bench.embedder.pairs bench/embedder/data/conversations.jsonl.gz --out pairs/
 
-The input is a directory of conversation files or a ``.jsonl.gz`` with
-one conversation per line.
+Each input is a directory of conversation files or a ``.jsonl.gz`` with
+one conversation per line; several can be given.
 
 Writes ``train.jsonl`` and ``val.jsonl``. Each line is one question
 with one turn that answers it and some turns from the same conversation
@@ -97,7 +97,9 @@ def read_conversations(source: str) -> tuple[list[dict[str, Any]], int]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("directory", help="directory of c*.json files, or a .jsonl.gz")
+    parser.add_argument(
+        "sources", nargs="+", help="directories of c*.json files, or .jsonl.gz files"
+    )
     parser.add_argument("--out", required=True)
     parser.add_argument("--negatives", type=int, default=5)
     parser.add_argument("--val-share", type=float, default=0.1)
@@ -107,7 +109,11 @@ def main(argv: list[str] | None = None) -> int:
     from myelin.embedders import StaticEmbedder
 
     embedder = StaticEmbedder()
-    conversations, skipped = read_conversations(args.directory)
+    conversations, skipped = [], 0
+    for source in args.sources:
+        kept, left_out = read_conversations(source)
+        conversations += kept
+        skipped += left_out
     random.Random(args.seed).shuffle(conversations)
     held = max(1, round(len(conversations) * args.val_share))
     out = Path(args.out)
