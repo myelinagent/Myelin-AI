@@ -6,11 +6,17 @@ model off the shelf.
 
 ## What is here
 
-- `data/conversations.jsonl.gz`: 500 invented two-person conversations
-  (49,210 turns over 5 to 9 dated sessions each) with 9,970 questions,
-  each tagged with the turn or turns that answer it. All of it was
-  written by a language model from the seeded briefs in `briefs.py`;
-  none of it comes from LoCoMo, LongMemEval or any other dataset.
+- `data/conversations.jsonl.gz` (round one): 500 invented two-person
+  conversations, 49,210 turns over 5 to 9 dated sessions each, with
+  9,970 questions, each tagged with the turn or turns that answer it.
+- `data/conversations2.jsonl.gz` (round two): 260 histories of one
+  person talking to an AI assistant (18,896 turns, 5,199 questions,
+  about half in the first person) and 240 sets of the notes working
+  agents save about a project and its owner (21,013 notes, 4,800
+  search queries).
+- All of it was written by a language model from the seeded briefs in
+  `briefs.py`; none of it comes from LoCoMo, LongMemEval or any other
+  dataset.
 - `briefs.py`: writes the briefs.
 - `validate.py`: checks a conversation's format.
 - `pairs.py`: turns conversations into training pairs.
@@ -24,7 +30,7 @@ pip install -e ".[static]" sentence-transformers datasets accelerate
 ```
 
 ```bash
-python -m bench.embedder.pairs bench/embedder/data/conversations.jsonl.gz --out pairs/
+python -m bench.embedder.pairs bench/embedder/data/conversations.jsonl.gz bench/embedder/data/conversations2.jsonl.gz --out pairs/
 ```
 
 ```bash
