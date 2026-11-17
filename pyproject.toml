@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "myelin-ai"
-version = "1.5.3"
+version = "1.6.0"
 description = "Drop-in memory layer for AI agents — event-anchored facts, dream-synthesis consolidation, apoptosis forgetting, cite() outcome-conditioned learning, working-memory sessions, and a memory-aware multi-step agent orchestrator (OpenAI + Gemini)."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,6 +47,12 @@ embeddings = [
 # CPU-only static embeddings for hybrid search (myelin.embedders.StaticEmbedder).
 static = [
     "model2vec>=0.4",
+    "numpy>=1.26",
+]
+# A fine-tuned transformer embedder (myelin.embedders.NeuralEmbedder):
+# finds more than the static one, needs PyTorch, slower to embed.
+neural = [
+    "sentence-transformers>=3.0",
     "numpy>=1.26",
 ]
 # Runtime path for the Memory-R1 contrastive utility backend.

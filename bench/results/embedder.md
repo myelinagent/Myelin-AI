@@ -69,6 +69,34 @@ An earlier version of this page reported the first 100 entries of the
 file. The file is sorted by question type, so that slice held only two
 of the six types, and its figures are withdrawn.
 
+## LongMemEval-S, all 500 entries, one schedule
+
+| Embedder | Arm | top 5 | top 10 | top 20 |
+|---|---|---:|---:|---:|
+| Static default | static | 65.1 | 77.9 | 86.6 |
+| Static default | decay | 62.6 | 75.4 | 83.9 |
+| Fine-tuned, round two | static | 72.4 | 85.4 | 92.1 |
+| Fine-tuned, round two | decay | 69.7 | 82.7 | 89.4 |
+
+Both agree with the 250-entry sample to within half a point. Feedback
+moved no figure by more than 0.3.
+
+## Speed
+
+`python -m bench.embedder.timing`, 4-core CPU, no GPU, nothing else
+running. Short texts are 2,000 single turns from the round-two data;
+long texts are 500 runs of eight turns joined (1,220 characters on
+average). Batches of 32.
+
+| | Static default | Fine-tuned, round two |
+|---|---:|---:|
+| Short texts per second | 14,914 | 103 |
+| Long texts per second | 5,007 | 15 |
+| One question, median | 0.09 ms | 11.7 ms |
+| Load time | 1.4 s | 4.4 s |
+| Weights on disk | 125 MB | 128 MB |
+| Runtime needed | numpy | PyTorch (809 MB installed, CPU build) |
+
 ## What it shows
 
 - **On LoCoMo a small neural embedder is worth about ten points** over
@@ -99,10 +127,13 @@ of the six types, and its figures are withdrawn.
 
 ## Not done
 
-- The full 500 LongMemEval entries, or more than one schedule for the
-  neural embedders there.
+- More than one schedule for the neural embedders on LongMemEval.
+- Speed on a GPU.
 - The feedback and decay arms on LoCoMo for round two.
 - More than one pass of training, a larger base model, or distilling
   the tuned model back into a static one.
-- The fine-tuned weights are not published; they can be rebuilt with
-  the commands in `bench/embedder/README.md`.
+
+The round-two weights are published as
+`myelinagent/myelin-embed-small-en-v1` on the Hugging Face Hub and are
+the default of `myelin.embedders.NeuralEmbedder`. They can be rebuilt
+with the commands in `bench/embedder/README.md`.

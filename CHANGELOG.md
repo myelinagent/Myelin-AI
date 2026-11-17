@@ -6,6 +6,35 @@ project uses semantic versioning.
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-11-17
+
+### Added
+
+- **`myelin.embedders.NeuralEmbedder`** (extra `myelin-ai[neural]`): a
+  sentence-transformers embedder whose default model,
+  `myelinagent/myelin-embed-small-en-v1` on the Hugging Face Hub, is
+  `BAAI/bge-small-en-v1.5` fine-tuned on 23,781 synthetic question and
+  answer pairs. Under LongHAUL with memories kept forever, all evidence
+  is in the top 5 for 66.7% of LoCoMo questions (static embedder 46.4%)
+  and 72.4% of LongMemEval-S questions (65.1%). It embeds about 100
+  short messages a second on a 4-core CPU where the static embedder
+  embeds about 15,000, and needs PyTorch. `StaticEmbedder` stays the
+  default.
+- `myelin-mcp --embedder {static,neural}` and `--backfill`.
+
+### Changed
+
+- `backfill_embeddings()` also re-embeds memories whose stored vector
+  has a different size from the current embedder's, so it can be run
+  after changing embedder. Such vectors were already left out of
+  search.
+
+### Benchmarks
+
+- `bench/results/embedder.md`: the fine-tuned embedder on all 500
+  LongMemEval-S questions, and embedding speed
+  (`bench.embedder.timing`).
+
 ## [1.5.3] — 2026-11-16
 
 ### Added

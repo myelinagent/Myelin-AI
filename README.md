@@ -923,6 +923,39 @@ Any object with `encode(text) -> sequence of floats` (and optionally
 `encode_batch(texts)`) works in place of `StaticEmbedder`. If the embedder
 raises, writes and searches carry on lexically.
 
+#### A neural embedder (optional)
+
+`NeuralEmbedder` is a small transformer fine-tuned for finding the turn
+that answers a question
+([`myelinagent/myelin-embed-small-en-v1`](https://huggingface.co/myelinagent/myelin-embed-small-en-v1),
+33M parameters, English). It finds more and costs more.
+
+```bash
+pip install "myelin-ai[neural]"
+```
+
+```python
+from myelin.embedders import NeuralEmbedder
+
+client = MemoryClient(db_path="memory.db", embedder=NeuralEmbedder())
+client.backfill_embeddings()    # also re-embeds what another embedder embedded
+```
+
+| | `StaticEmbedder` | `NeuralEmbedder` |
+|---|---:|---:|
+| LoCoMo, all evidence in the top 5 / 10 | 46.4 / 55.8 | 66.7 / 75.7 |
+| LongMemEval-S, all evidence in the top 5 / 10 | 65.1 / 77.9 | 72.4 / 85.4 |
+| Short messages embedded per second (4-core CPU) | 14,900 | 103 |
+| One search query embedded | 0.09 ms | 12 ms |
+| Needs | numpy | PyTorch |
+
+The static embedder stays the default: it is about 150 times faster to
+write with and needs no deep-learning framework. Choose the neural one
+when search quality matters more than write speed, or when a GPU is
+available (`NeuralEmbedder(device="cuda")` or `"mps"`). For the MCP
+server: `myelin-mcp --embedder neural --backfill`. Measurements:
+[`bench/results/embedder.md`](bench/results/embedder.md).
+
 ### Facts at write time (opt-in)
 
 `add_conversation` stores a conversation one memory per message. Given a

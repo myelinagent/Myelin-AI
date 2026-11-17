@@ -199,3 +199,11 @@ def test_memories_are_tagged_with_the_agent_that_stored_them():
         assert sum("(from" not in line for line in ids) == 1
     finally:
         client.close()
+
+
+def test_the_embedder_flag_picks_the_embedder_without_loading_it():
+    from myelin.embedders import NeuralEmbedder, StaticEmbedder
+    from myelin.serve.mcp import _embedder
+
+    assert isinstance(_embedder(), StaticEmbedder)
+    assert isinstance(_embedder("neural"), NeuralEmbedder)

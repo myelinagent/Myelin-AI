@@ -547,13 +547,18 @@ class SqliteBackend:
             self._conn.commit()
             return True
 
-    def memories_without_vectors(self, user_id: str | None = None) -> list[Memory]:
-        """Live memories that have no embedding stored, oldest first."""
-        sql = (
-            "SELECT * FROM memories WHERE id NOT IN "
-            "(SELECT memory_id FROM memory_vectors)"
-        )
+    def memories_without_vectors(
+        self, user_id: str | None = None, *, vector_bytes: int | None = None
+    ) -> list[Memory]:
+        """Live memories that have no embedding stored, oldest first. With
+        ``vector_bytes``, also those whose stored embedding is a different
+        size, which is what another embedding model leaves behind."""
+        usable = "SELECT memory_id FROM memory_vectors"
         params: list[Any] = []
+        if vector_bytes is not None:
+            usable += " WHERE length(vector) = ?"
+            params.append(vector_bytes)
+        sql = f"SELECT * FROM memories WHERE id NOT IN ({usable})"
         if user_id is not None:
             sql += " AND user_id = ?"
             params.append(user_id)
