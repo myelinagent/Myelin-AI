@@ -37,7 +37,11 @@ search and keeps it in the store, so it can be undone. With a
 6{,}000-token context \mbox{Myelin-AI} scores 90.1\% on LongMemEval-S
 (\texttt{gpt-5-mini}, mean of four runs; 88.6\% with \texttt{gpt-4o})
 and 92.6\% on LoCoMo, within the range that published systems report,
-with median retrieval latency of 30\,ms at 50{,}000 memories. We
+with median retrieval latency of 30\,ms at 50{,}000 memories. An
+optional embedder fine-tuned on synthetic conversations puts all the
+evidence in the top five results for 66.7\% of LoCoMo questions and
+72.4\% of LongMemEval-S questions, against 46.4\% and 65.1\% for the
+default, and embeds about 150 times more slowly on a CPU. We
 describe the design, say which parts moved those scores and which did
 not, and report where it fails: on long histories whose old facts are
 asked for once and late, forgetting by age hides evidence that use has
@@ -78,7 +82,8 @@ biology.) It has four commitments.
   take whatever model the caller supplies.
 \end{itemize}
 
-This paper describes the system as released in version 1.5.0, reports
+This paper describes the system as released in version 1.5.0, with
+the optional embedder added in 1.6.0, reports
 its measured behaviour, and is explicit about what the measurements do
 not support. It makes no claim of rank among memory systems; published
 scores use different answering models, judges and prompts, and our own
@@ -130,7 +135,8 @@ similarity over its vectors is a second ranking, and the two are merged
 by reciprocal-rank fusion \citep{cormack2009rrf}. The bundled embedder
 is a static model that runs on a CPU; any object with an
 \texttt{encode} method can replace it, and if it raises, reads and
-writes continue lexically.
+writes continue lexically. An optional fine-tuned transformer embedder
+is described in Section~\ref{sec:embedder}.
 
 One fusion did not serve both the top of the list and its depth.
 Weighting the vector ranking double put the most evidence inside a
@@ -395,6 +401,131 @@ as needed; we did not measure answers. Either way, an application
 whose users ask about old, never-revisited details should run \mbox{Myelin-AI}
 with quarantine disabled or with a slower decay, and this is the main
 open problem in the design.
+
+\section{A fine-tuned embedder}
+\label{sec:embedder}
+
+The static embedder averages token vectors. It is fast and it is the
+weakest part of retrieval: on LoCoMo, fewer than half of the questions
+have all their evidence in the top five. From version 1.6.0
+\mbox{Myelin-AI} offers a second, optional embedder, a small
+transformer fine-tuned for one task: given a question, find the turn or
+note that answers it. This section reports what it gains and what it
+costs.
+
+\paragraph{Model and data.} The base is \texttt{bge-small-en-v1.5}
+\citep{xiao2023bge}, a 33M-parameter English model with 384-dimensional
+vectors. The training data is synthetic. A language model wrote 1{,}000
+items from seeded briefs: 500 chats between two people, 260 histories
+of one person talking to an assistant, and 240 sets of the notes a
+working agent saves about a project. Together they hold about 89{,}000
+turns and notes and 20{,}000 questions, each tagged with the text that
+answers it. From 900 of the items we built 23{,}781 training examples,
+a question with its answering text and three near misses from the same
+conversation, chosen as the static embedder's closest wrong results.
+Training was one pass with a multiple-negatives ranking loss
+\citep{henderson2017mnrl} in sentence-transformers
+\citep{reimers2019sbert}, and took under two hours on a four-core CPU
+with no GPU. No text from LoCoMo or LongMemEval was used. On the
+held-out tenth of the items the answering text was the top result for 59.3\% of
+questions, against 43.8\% before training.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{llrrr}
+\toprule
+ & Embedder & Top 5 & Top 10 & Top 20 \\
+\midrule
+LoCoMo & Static (default) & 46.4 & 55.8 & 63.9 \\
+ & \texttt{bge-small}, as published & 56.5 & 66.1 & 74.4 \\
+ & Fine-tuned & 66.7 & 75.7 & 82.0 \\
+\midrule
+LongMemEval-S & Static (default) & 65.1 & 77.9 & 86.6 \\
+ & \texttt{bge-small}, as published$^\dagger$ & 62.7 & 80.1 & 89.2 \\
+ & Fine-tuned & 72.4 & 85.4 & 92.1 \\
+\bottomrule
+\end{tabular}
+\caption{Share of questions with all evidence in the top results (\%),
+LongHAUL with nothing forgotten and no feedback. LoCoMo: ten
+conversations, three schedules. LongMemEval-S: 500 questions, one
+schedule. $^\dagger$On a 250-question sample drawn evenly across
+question types, where the static embedder scores 64.9 and the
+fine-tuned one 72.2 in the top five.}
+\label{tab:embedder}
+\end{table}
+
+\paragraph{Lift.} Table~\ref{tab:embedder} gives retrieval with each
+embedder. On LoCoMo the published model is worth ten points over the
+static one at every depth and fine-tuning adds ten more. On
+LongMemEval-S the published model is no better than the static one in
+the top five; the fine-tuned model is 7.3 points better there and 5.5
+to 7.5 better at ten and twenty.
+
+\paragraph{The training data has to resemble the use.} A first round
+trained on the two-person chats alone. It reached 66.0\% in the top
+five on LoCoMo, whose conversations are of that kind, and 65.1\% on the
+LongMemEval-S sample, level with the static embedder. Adding the
+assistant histories and the notes raised the sample to 72.2\% and left
+LoCoMo where it was (66.7\%). The second round bought nothing on the
+data the first round already covered and seven points on the data it
+did not.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+ & Static & Fine-tuned \\
+\midrule
+Short messages embedded per second & 14{,}914 & 103 \\
+Long messages embedded per second & 5{,}007 & 15 \\
+One question embedded (ms, median) & 0.09 & 11.7 \\
+Time to load (s) & 1.4 & 4.4 \\
+Weights on disk (MB) & 125 & 128 \\
+Vector dimensions & 512 & 384 \\
+Runtime required & numpy & PyTorch \\
+\bottomrule
+\end{tabular}
+\caption{Cost of each embedder on a four-core CPU with no GPU, in
+batches of 32. Short messages average about 140 characters and long
+ones 1{,}220. Machine-dependent.}
+\label{tab:embedcost}
+\end{table}
+
+\paragraph{Time.} Table~\ref{tab:embedcost} gives the cost. The
+fine-tuned model embeds about 150 times fewer short messages a second
+than the static one, and over 300 times fewer long ones. Writing is
+where this is felt: with the static embedder a store takes 2{,}300 to
+3{,}700 memories a second, and with the fine-tuned one it is limited
+to about a hundred short messages a second, so importing a history of
+500 long messages takes about half a minute in place of well under a
+second. Reading is affected less. Embedding the question adds about
+12\,ms to a \texttt{recall} whose median is 8 to 83\,ms
+(Table~\ref{tab:scale}), and the vectors are a quarter smaller. The model also brings PyTorch, about 800\,MB
+installed, into a package that otherwise needs only numpy for hybrid
+search. We did not measure a GPU.
+
+\paragraph{Feedback matters less with a better embedder.} On LoCoMo,
+feedback adds 6.3 points in the top five with the static embedder, 3.5
+with the published model and 1.5 with the first-round fine-tune (it
+was not measured with the final model). The two mechanisms recover
+some of the same misses. Forgetting by age costs about the same
+with either embedder (2.5 and 2.7 points in the top five on
+LongMemEval-S).
+
+\paragraph{What this does not show.} The accuracy figures in
+Section~\ref{sec:eval} were measured with the static embedder; answers
+with the fine-tuned one were not judged. The synthetic data was
+written with the kinds of conversation and question in these two
+benchmarks in mind, so the gains say nothing about data of another
+kind. The LongMemEval-S figures are from one schedule. The model is
+English only. For these reasons, and because of the cost above, the
+static embedder remains the default; the fine-tuned one suits a store
+that is written slowly and searched often, or a machine with a GPU.
+The weights are published under the MIT licence as
+\texttt{myelinagent/myelin-embed-small-en-v1}, with the data and
+training script in the repository.
 
 \section{Limitations}
 

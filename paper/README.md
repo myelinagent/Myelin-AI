@@ -4,7 +4,7 @@ Two drafts for arXiv that cite each other.
 
 - `main.tex` / `main.pdf` (12 pages): LongHAUL, the memory-over-time
   evaluation protocol, and the case for longitudinal benchmarks of agent memory.
-- `myelin.tex` / `myelin.pdf` (8 pages): the system itself, its design,
+- `myelin.tex` / `myelin.pdf` (10 pages): the system itself, its design,
   interface, benchmark results, cost, and where it fails. Its numbers
   come from the same result files listed below, plus the write
   throughput and latency table from `bench/results/scale.md`.
@@ -50,6 +50,10 @@ Every table can be regenerated with the commands in `bench/README.md`.
       AMA-Bench, MemRiskBench) were taken from their arXiv pages by an
       automated reader; check authors, titles and the paragraph's
       description of each against the papers by hand.
+- [ ] Three entries added on 2026-11-17 for the embedder section
+      (`xiao2023bge`, `reimers2019sbert`, `henderson2017mnrl`) were
+      written from memory and not checked against the papers; check
+      authors, titles and identifiers by hand.
 - [ ] `refs.bib` was checked against primary sources on 2026-11-14.
       Two details are still to confirm by hand (noted at the top of the
       file): the BM25 survey's volume and pages, and the exact title of

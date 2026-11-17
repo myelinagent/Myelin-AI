@@ -312,12 +312,18 @@ def serve(server: MemoryServer, stdin: IO[str], stdout: IO[str]) -> None:
             stdout.flush()
 
 
-def _embedder() -> Any:
-    """The bundled CPU embedder when its extra is installed, else None."""
+def _embedder(kind: str = "static") -> Any:
+    """The chosen bundled embedder when its extra is installed, else None."""
     try:
-        from myelin.embedders import StaticEmbedder
+        if kind == "neural":
+            from myelin.embedders import NeuralEmbedder
 
-        return StaticEmbedder()
+            embedder: Any = NeuralEmbedder()
+        else:
+            from myelin.embedders import StaticEmbedder
+
+            embedder = StaticEmbedder()
+        return embedder
     except Exception as exc:  # noqa: BLE001 - any failure to load means lexical search
         print(f"myelin-mcp: lexical search only ({exc})", file=sys.stderr)
         return None
@@ -338,6 +344,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-embedder", action="store_true",
         help="lexical search only, even if the static extra is installed",
+    )
+    parser.add_argument(
+        "--embedder", choices=("static", "neural"), default="static",
+        help="static: fast, CPU only (extra 'static'). neural: finds more, "
+        "needs PyTorch and is about a hundred times slower to embed (extra "
+        "'neural'). After switching, run once with --backfill",
+    )
+    parser.add_argument(
+        "--backfill", action="store_true",
+        help="before serving, embed the memories that have no vector from "
+        "the chosen embedder (those written without one, or with the other)",
     )
     parser.add_argument(
         "--source", default="",
@@ -421,10 +438,13 @@ def main(argv: list[str] | None = None) -> int:
     client = MemoryClient(
         db_path=db_path,
         user_id=args.user_id,
-        embedder=None if args.no_embedder else _embedder(),
+        embedder=None if args.no_embedder else _embedder(args.embedder),
         cite_learning=True,
     )
     try:
+        if args.backfill:
+            print(f"myelin-mcp: embedded {client.backfill_embeddings()} memories",
+                  file=sys.stderr)
         if args.http:
             from myelin.serve import mcp_http
 

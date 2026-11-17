@@ -300,13 +300,21 @@ class MemoryClient:
         return vector or None
 
     def backfill_embeddings(self, *, user_id: str | None = None) -> int:
-        """Embed live memories that have no vector yet (for example those
-        written before an embedder was configured). Covers every user
-        unless ``user_id`` is given. Returns how many were embedded."""
+        """Embed live memories that have no vector from the current
+        embedder: those written before one was configured, and those
+        embedded by a model with a different vector size (run this after
+        changing embedder). Covers every user unless ``user_id`` is
+        given. Returns how many were embedded."""
         if not self._vectors_enabled():
             return 0
+        probe = self._embed("size probe")
+        if probe is None:
+            return 0
+        vector_bytes = len(probe) * 4  # stored as float32
         done = 0
-        for memory in self._backend.memories_without_vectors(user_id):
+        for memory in self._backend.memories_without_vectors(
+            user_id, vector_bytes=vector_bytes
+        ):
             vector = self._embed(_search_text(memory.content, memory.index_text))
             if vector is not None and self._backend.set_vector(memory.id, vector):
                 done += 1

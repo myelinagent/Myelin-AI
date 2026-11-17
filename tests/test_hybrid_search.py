@@ -199,6 +199,65 @@ def test_static_embedder_reports_a_missing_dependency(monkeypatch):
         StaticEmbedder().encode("hello")
 
 
+def test_neural_embedder_reports_a_missing_dependency(monkeypatch):
+    from myelin.embedders import NeuralEmbedder
+
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    with pytest.raises(ImportError, match=r"myelin-ai\[neural\]"):
+        NeuralEmbedder().encode("hello")
+
+
+def test_neural_embedder_asks_the_model_for_unit_vectors(monkeypatch):
+    import types
+
+    from myelin.embedders import DEFAULT_NEURAL_MODEL, NeuralEmbedder
+
+    seen = {}
+
+    class Vectors(list):
+        def tolist(self):
+            return list(self)
+
+    class Model:
+        def __init__(self, name, device=None):
+            seen["name"], seen["device"] = name, device
+
+        def encode(self, texts, **options):
+            seen["options"] = options
+            return Vectors([[1.0, 0.0] for _ in texts])
+
+    monkeypatch.setitem(
+        sys.modules, "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=Model),
+    )
+    embedder = NeuralEmbedder(device="cpu", batch_size=8)
+    assert seen == {}  # nothing is loaded until it is used
+    assert embedder.encode("hello") == [1.0, 0.0]
+    assert embedder.encode_batch(["a", "b"]) == [[1.0, 0.0], [1.0, 0.0]]
+    assert seen["name"] == DEFAULT_NEURAL_MODEL and seen["device"] == "cpu"
+    assert seen["options"]["normalize_embeddings"] is True
+    assert seen["options"]["batch_size"] == 8
+
+
+def test_backfill_replaces_vectors_left_by_another_embedder(tmp_path):
+    class Sized:
+        def __init__(self, size):
+            self.size = size
+
+        def encode(self, text):
+            return [1.0 if "greyhound" in text else 0.1] + [0.5] * (self.size - 1)
+
+    path = str(tmp_path / "m.db")
+    first = MemoryClient(db_path=path, embedder=Sized(4))
+    first.add("Scott adopted a greyhound")
+    first.close()
+
+    second = MemoryClient(db_path=path, embedder=Sized(3))
+    assert second.backfill_embeddings() == 1
+    assert second.backfill_embeddings() == 0
+    second.close()
+
+
 def test_vectors_written_through_another_connection_are_searched(tmp_path):
     """The in-memory vector cache must notice another process's writes."""
     from myelin.backends.sqlite import SqliteBackend

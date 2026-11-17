@@ -22,6 +22,8 @@ model off the shelf.
 - `pairs.py`: turns conversations into training pairs.
 - `train.py`: fine-tunes `BAAI/bge-small-en-v1.5`.
 - `evaluate.py`: runs LongHAUL with a sentence-transformers model.
+- `timing.py`: texts per second and time per question, against the
+  static embedder.
 
 ## Run it
 
