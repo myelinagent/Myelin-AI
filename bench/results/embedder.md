@@ -42,7 +42,9 @@ Share of questions with all their evidence in the top results (%).
 | Fine-tuned, round one | feedback | 67.5 ± 0.3 | 75.5 ± 0.2 | 81.3 ± 0.4 |
 | Fine-tuned, round two | static | 66.7 ± 0.1 | 75.7 ± 0.3 | 82.0 ± 0.2 |
 
-The feedback arm was not measured for round two. The MiniLM rows were embedded through `fastembed`; the others through
+The feedback arm was not measured for round two.
+
+The MiniLM rows were embedded through `fastembed`; the others through
 `sentence-transformers` (`bench.embedder.evaluate`). `bge-small` gave
 the same figures through both, to within 0.2.
 
