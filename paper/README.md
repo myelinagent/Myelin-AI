@@ -46,18 +46,21 @@ Every table can be regenerated with the commands in `bench/README.md`.
       Loss); the code runs it as `bench.lifetime`. A web search on
       2026-11-15 found no other benchmark with that name; search again
       before submitting.
-- [ ] The three benchmark entries added on 2026-11-16 (MemoryAgentBench,
-      AMA-Bench, MemRiskBench) were taken from their arXiv pages by an
-      automated reader; check authors, titles and the paragraph's
-      description of each against the papers by hand.
-- [ ] Three entries added on 2026-11-17 for the embedder section
-      (`xiao2023bge`, `reimers2019sbert`, `henderson2017mnrl`) were
-      written from memory and not checked against the papers; check
-      authors, titles and identifiers by hand.
-- [ ] `refs.bib` was checked against primary sources on 2026-11-14.
-      Two details are still to confirm by hand (noted at the top of the
-      file): the BM25 survey's volume and pages, and the exact title of
-      the LoCoMo audit post.
+- [x] The six entries added on 2026-11-16 and 17 (MemoryAgentBench,
+      AMA-Bench, MemRiskBench, `xiao2023bge`, `reimers2019sbert`,
+      `henderson2017mnrl`) were checked on 2026-11-18 against the arXiv
+      API and the ACL Anthology. `xiao2023bge` had a wrong title and two
+      authors missing; fixed. The paragraph describing the three
+      benchmarks agrees with their abstracts and, for AMA-Bench's four
+      capabilities, with the paper's text.
+- [ ] Two details in `refs.bib` are still to confirm by hand (noted at
+      the top of the file): the BM25 survey's volume and pages, where
+      Crossref disagrees with the citation in common use, and the
+      LoCoMo audit post, whose own title is cut off.
+- [ ] Both papers end with a "Use of generative AI" statement, as
+      arXiv requires. It says the author reviewed the results and the
+      text: read both PDFs through before submitting, and reword the
+      statement if it does not describe how the work was done.
 - [ ] Other systems' scores were re-checked against their sources on
       2026-11-14 (`bench/results/final.md`); they change often, so check
       again on the day of submission and read the decimals by eye.

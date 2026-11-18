@@ -1,9 +1,13 @@
 % Checked against primary sources on 2026-11-14 (arXiv, ACL Anthology,
-% Crossref, proceedings pages). Still to confirm by hand:
-% - robertson2009bm25: volume 3(4), pages 333-389 are the publisher's
-%   citation; Crossref's record for the DOI gives different numbers.
-% - penfield2026locomo: the page's own title is cut off after
-%   "intentionally"; "wrong answers" is completed from its first paragraph.
+% Crossref, proceedings pages). On 2026-11-18 the entries added since
+% (hu2025memoryagentbench, zhao2026amabench, jiang2026memriskbench,
+% xiao2023bge, reimers2019sbert, henderson2017mnrl) were checked against
+% the arXiv API and the ACL Anthology. Still to confirm by hand:
+% - robertson2009bm25: volume 3(4), pages 333-389 is the citation in
+%   common use; Crossref's record for the DOI gives volume 4(1-2),
+%   pages 1-174. Check the publisher's page.
+% - penfield2026locomo: the post's own title ends at "intentionally";
+%   the bracketed words are completed from its first paragraph.
 
 @inproceedings{wu2025longmemeval,
   title={{LongMemEval}: Benchmarking Chat Assistants on Long-Term Interactive Memory},
@@ -91,7 +95,7 @@
 }
 
 @misc{penfield2026locomo,
-  title={We audited {LoCoMo}: 6.4\% of the answer key is wrong and the judge accepts up to 63\% of intentionally wrong answers},
+  title={We audited {LoCoMo}: 6.4\% of the answer key is wrong and the judge accepts up to 63\% of intentionally [wrong answers]},
   author={{Penfield Labs}},
   howpublished={\url{https://penfieldlabs.substack.com/p/we-audited-locomo-64-of-the-answer}},
   year={2026},
@@ -166,8 +170,8 @@
 }
 
 @article{xiao2023bge,
-  title   = {{C-Pack}: Packaged Resources To Advance General {Chinese} Embedding},
-  author  = {Xiao, Shitao and Liu, Zheng and Zhang, Peitian and Muennighoff, Niklas},
+  title   = {{C-Pack}: Packed Resources For General {Chinese} Embeddings},
+  author  = {Xiao, Shitao and Liu, Zheng and Zhang, Peitian and Muennighoff, Niklas and Lian, Defu and Nie, Jian-Yun},
   journal = {arXiv preprint arXiv:2309.07597},
   year    = {2023}
 }
@@ -175,13 +179,17 @@
 @inproceedings{reimers2019sbert,
   title     = {{Sentence-BERT}: Sentence Embeddings using {Siamese} {BERT}-Networks},
   author    = {Reimers, Nils and Gurevych, Iryna},
-  booktitle = {Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing},
-  year      = {2019}
+  booktitle = {Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP)},
+  pages     = {3982--3992},
+  address   = {Hong Kong, China},
+  publisher = {Association for Computational Linguistics},
+  year      = {2019},
+  doi       = {10.18653/v1/D19-1410}
 }
 
 @article{henderson2017mnrl,
   title   = {Efficient Natural Language Response Suggestion for {Smart Reply}},
-  author  = {Henderson, Matthew and Al-Rfou, Rami and Strope, Brian and Sung, Yun-Hsuan and Luk{\'a}cs, L{\'a}szl{\'o} and Guo, Ruiqi and Kumar, Sanjiv and Miklos, Balint and Kurzweil, Ray},
+  author  = {Henderson, Matthew and Al-Rfou, Rami and Strope, Brian and Sung, Yun-hsuan and Lukacs, Laszlo and Guo, Ruiqi and Kumar, Sanjiv and Miklos, Balint and Kurzweil, Ray},
   journal = {arXiv preprint arXiv:1705.00652},
   year    = {2017}
 }
