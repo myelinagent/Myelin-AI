@@ -48,7 +48,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from myelin.types import Event, Memory, SearchResult
+from myelin.types import Edge, Entity, Event, Flag, GraphStats, Memory, Mention, SearchResult
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
@@ -157,6 +157,83 @@ CREATE TABLE IF NOT EXISTS memory_vectors (
 CREATE INDEX IF NOT EXISTS idx_memory_vectors_user ON memory_vectors(user_id);
 """
 
+_SCHEMA_GRAPH = """
+CREATE TABLE IF NOT EXISTS entities (
+    id          TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    summary     TEXT NOT NULL DEFAULT '',
+    page_path   TEXT NOT NULL DEFAULT '',
+    page_commit TEXT,
+    attrs_json  TEXT NOT NULL DEFAULT '{}',
+    t_valid     TEXT NOT NULL,
+    t_invalid   TEXT,
+    PRIMARY KEY (user_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_entities_user_type
+    ON entities(user_id, type);
+
+CREATE TABLE IF NOT EXISTS entity_aliases (
+    user_id     TEXT NOT NULL,
+    alias_norm  TEXT NOT NULL,
+    entity_id   TEXT NOT NULL,
+    PRIMARY KEY (user_id, alias_norm, entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_entity_aliases_entity
+    ON entity_aliases(user_id, entity_id);
+
+CREATE TABLE IF NOT EXISTS edges (
+    id          TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    src_id      TEXT NOT NULL,
+    predicate   TEXT NOT NULL,
+    dst_id      TEXT NOT NULL,
+    origin      TEXT NOT NULL,
+    attrs_json  TEXT NOT NULL DEFAULT '{}',
+    confidence  REAL NOT NULL DEFAULT 0.5,
+    event_id    TEXT,
+    page_commit TEXT,
+    t_valid     TEXT NOT NULL,
+    t_invalid   TEXT,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_edges_src
+    ON edges(user_id, src_id, predicate);
+CREATE INDEX IF NOT EXISTS idx_edges_dst
+    ON edges(user_id, dst_id, predicate);
+
+CREATE TABLE IF NOT EXISTS mentions (
+    memory_id   TEXT NOT NULL,
+    entity_id   TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    method      TEXT NOT NULL,
+    PRIMARY KEY (memory_id, entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mentions_entity
+    ON mentions(user_id, entity_id);
+
+CREATE TABLE IF NOT EXISTS flags (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    target_kind TEXT NOT NULL,
+    target_id   TEXT,
+    note        TEXT NOT NULL,
+    source      TEXT,
+    created_at  TEXT NOT NULL,
+    resolved_at TEXT,
+    resolution  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_flags_user_open
+    ON flags(user_id, resolved_at);
+"""
+
+_VALID_EDGE_ORIGINS = frozenset({"stated", "observed", "inferred"})
+_VALID_DIRECTIONS = frozenset({"out", "in", "both"})
+_VALID_MENTION_METHODS = frozenset({"alias", "model", "curator"})
+_VALID_FLAG_KINDS = frozenset({"entity", "edge", "memory", "missing"})
+
 # Reciprocal-rank fusion of the lexical and vector rankings, in two
 # parts (bench/results/fusion.md):
 #
@@ -258,10 +335,56 @@ def _dt_to_iso(dt: datetime | None) -> str | None:
     return dt.isoformat()
 
 
+def _normalize_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _dt_to_utc_iso(dt: datetime | None) -> str | None:
+    """Normalize naive or offset-aware datetimes to canonical UTC ISO strings."""
+    norm = _normalize_utc(dt)
+    return norm.isoformat() if norm is not None else None
+
+
 def _iso_to_dt(s: str | None) -> datetime | None:
     if s is None:
         return None
     return datetime.fromisoformat(s)
+
+
+def normalize_alias(text: str) -> str:
+    """Lower-case, replace punctuation with spaces, and collapse whitespace."""
+    cleaned = re.sub(r"[\W_]+", " ", text.lower())
+    return " ".join(cleaned.split())
+
+
+def _require_non_empty(value: str, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value
+
+
+def _temporal_sql(
+    table_alias: str,
+    as_of: datetime | None,
+    *,
+    include_closed: bool = False,
+) -> tuple[str, list[Any]]:
+    prefix = f"{table_alias}." if table_alias else ""
+    if as_of is not None:
+        t_iso = _dt_to_utc_iso(as_of)
+        if include_closed:
+            return f"{prefix}t_valid <= ?", [t_iso]
+        return (
+            f"{prefix}t_valid <= ? AND ({prefix}t_invalid IS NULL OR {prefix}t_invalid > ?)",
+            [t_iso, t_iso],
+        )
+    if include_closed:
+        return "", []
+    return f"{prefix}t_invalid IS NULL", []
 
 
 class SqliteBackend:
@@ -337,6 +460,7 @@ class SqliteBackend:
 
             cursor.executescript(_SCHEMA_V1_2_NEW_TABLES)
             cursor.executescript(_VECTOR_SCHEMA)
+            cursor.executescript(_SCHEMA_GRAPH)
             self._conn.commit()
             self._fts = self._init_fts()
             # user_id -> (memory ids, their vectors), built on first
@@ -851,6 +975,9 @@ class SqliteBackend:
             cur.execute(
                 "DELETE FROM cite_events WHERE memory_id = ?", (memory_id,)
             )
+            cur.execute(
+                "DELETE FROM mentions WHERE memory_id = ?", (memory_id,)
+            )
             self._conn.commit()
             return deleted > 0
 
@@ -1111,7 +1238,16 @@ class SqliteBackend:
             cur.execute("DELETE FROM events")
             cur.execute("DELETE FROM cite_events")
             cur.execute("DELETE FROM abstain_events")
+            cur.execute("DELETE FROM entities")
+            cur.execute("DELETE FROM entity_aliases")
+            cur.execute("DELETE FROM edges")
+            cur.execute("DELETE FROM mentions")
+            cur.execute("DELETE FROM flags")
             self._conn.commit()
+
+    def clear(self) -> None:
+        """Wipe all stored rows across memories and graph tables."""
+        self._clear_all()
 
     # ---- internals ----------------------------------------------
 
@@ -1282,4 +1418,692 @@ class SqliteBackend:
             shown_unused_count=int(row.get("shown_unused_count") or 0),
             related_support=float(row.get("related_support") or 0.0),
             index_text=row.get("index_text") or "",
+        )
+
+
+    # ---- knowledge-graph storage (GraphBackend) ------------------
+
+    def upsert_entity(
+        self, entity: Entity, *, aliases: Sequence[str] | None = None
+    ) -> Entity:
+        _require_non_empty(entity.id, "entity.id")
+        _require_non_empty(entity.user_id, "entity.user_id")
+        _require_non_empty(entity.type, "entity.type")
+        _require_non_empty(entity.name, "entity.name")
+
+        t_valid = _normalize_utc(entity.t_valid)
+        assert t_valid is not None
+        t_invalid = _normalize_utc(entity.t_invalid)
+        raw_aliases = entity.aliases if aliases is None else aliases
+        norm_aliases = tuple(
+            sorted(
+                {
+                    norm
+                    for candidate in (entity.name, *raw_aliases)
+                    if (norm := normalize_alias(candidate))
+                }
+            )
+        )
+        attrs_copy = dict(entity.attrs)
+
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """INSERT INTO entities
+                   (id, user_id, type, name, summary, page_path, page_commit,
+                    attrs_json, t_valid, t_invalid)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, id) DO UPDATE SET
+                       type = excluded.type,
+                       name = excluded.name,
+                       summary = excluded.summary,
+                       page_path = excluded.page_path,
+                       page_commit = excluded.page_commit,
+                       attrs_json = excluded.attrs_json,
+                       t_valid = excluded.t_valid,
+                       t_invalid = excluded.t_invalid""",
+                (
+                    entity.id,
+                    entity.user_id,
+                    entity.type,
+                    entity.name,
+                    entity.summary,
+                    entity.page_path,
+                    entity.page_commit,
+                    json.dumps(attrs_copy),
+                    t_valid.isoformat(),
+                    t_invalid.isoformat() if t_invalid is not None else None,
+                ),
+            )
+            cur.execute(
+                "DELETE FROM entity_aliases WHERE user_id = ? AND entity_id = ?",
+                (entity.user_id, entity.id),
+            )
+            if norm_aliases:
+                cur.executemany(
+                    "INSERT INTO entity_aliases (user_id, alias_norm, entity_id) "
+                    "VALUES (?, ?, ?)",
+                    [(entity.user_id, alias_norm, entity.id) for alias_norm in norm_aliases],
+                )
+            self._conn.commit()
+
+        return Entity(
+            id=entity.id,
+            user_id=entity.user_id,
+            type=entity.type,
+            name=entity.name,
+            t_valid=t_valid,
+            summary=entity.summary,
+            page_path=entity.page_path,
+            page_commit=entity.page_commit,
+            attrs=attrs_copy,
+            aliases=norm_aliases,
+            t_invalid=t_invalid,
+        )
+
+    def get_entity(
+        self, entity_id: str, *, user_id: str, as_of: datetime | None = None
+    ) -> Entity | None:
+        t_clause, t_params = _temporal_sql("", as_of, include_closed=False)
+        sql = "SELECT * FROM entities WHERE user_id = ? AND id = ?"
+        params: list[Any] = [user_id, entity_id]
+        if t_clause:
+            sql += f" AND {t_clause}"
+            params.extend(t_params)
+        with self._lock:
+            cur = self._conn.cursor()
+            row = cur.execute(sql, params).fetchone()
+            if row is None:
+                return None
+            cols = [d[0] for d in cur.description]
+            return self._rows_to_entities(
+                cur, user_id, [dict(zip(cols, row, strict=True))]
+            )[0]
+
+    def find_entities(
+        self, query: str, *, user_id: str, as_of: datetime | None = None
+    ) -> list[Entity]:
+        raw_q = query.strip()
+        norm_q = normalize_alias(query)
+        if not raw_q and not norm_q:
+            return []
+
+        match_clauses = ["e.id = ?"]
+        params: list[Any] = [user_id, raw_q]
+        if norm_q:
+            match_clauses.append(
+                "EXISTS (SELECT 1 FROM entity_aliases a "
+                "WHERE a.user_id = e.user_id AND a.entity_id = e.id AND a.alias_norm = ?)"
+            )
+            params.append(norm_q)
+
+        sql = (
+            f"SELECT e.* FROM entities e "
+            f"WHERE e.user_id = ? AND ({' OR '.join(match_clauses)})"
+        )
+        t_clause, t_params = _temporal_sql("e", as_of, include_closed=False)
+        if t_clause:
+            sql += f" AND {t_clause}"
+            params.extend(t_params)
+        sql += " ORDER BY CASE WHEN e.id = ? THEN 0 ELSE 1 END, e.name ASC, e.id ASC"
+        params.append(raw_q)
+
+        with self._lock:
+            cur = self._conn.cursor()
+            rows = cur.execute(sql, params).fetchall()
+            cols = [d[0] for d in cur.description]
+            return self._rows_to_entities(
+                cur, user_id, [dict(zip(cols, r, strict=True)) for r in rows]
+            )
+
+    def list_entities(
+        self,
+        *,
+        user_id: str,
+        entity_type: str | None = None,
+        as_of: datetime | None = None,
+        include_closed: bool = False,
+    ) -> list[Entity]:
+        sql = "SELECT * FROM entities WHERE user_id = ?"
+        params: list[Any] = [user_id]
+        if entity_type is not None:
+            sql += " AND type = ?"
+            params.append(entity_type)
+        t_clause, t_params = _temporal_sql("", as_of, include_closed=include_closed)
+        if t_clause:
+            sql += f" AND {t_clause}"
+            params.extend(t_params)
+        sql += " ORDER BY name ASC, id ASC"
+
+        with self._lock:
+            cur = self._conn.cursor()
+            rows = cur.execute(sql, params).fetchall()
+            cols = [d[0] for d in cur.description]
+            return self._rows_to_entities(
+                cur, user_id, [dict(zip(cols, r, strict=True)) for r in rows]
+            )
+
+    def close_entity(
+        self, entity_id: str, *, user_id: str, t_invalid: datetime
+    ) -> bool:
+        t_iso = _dt_to_utc_iso(t_invalid)
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "UPDATE entities SET t_invalid = ? "
+                "WHERE user_id = ? AND id = ? AND t_invalid IS NULL",
+                (t_iso, user_id, entity_id),
+            )
+            if cur.rowcount == 0:
+                return False
+            cur.execute(
+                "UPDATE edges SET t_invalid = ? "
+                "WHERE user_id = ? AND (src_id = ? OR dst_id = ?) AND t_invalid IS NULL",
+                (t_iso, user_id, entity_id, entity_id),
+            )
+            self._conn.commit()
+            return True
+
+    def alias_map(
+        self, *, user_id: str, as_of: datetime | None = None
+    ) -> dict[str, list[str]]:
+        t_clause, t_params = _temporal_sql("e", as_of, include_closed=False)
+        sql = (
+            "SELECT a.alias_norm, a.entity_id "
+            "FROM entity_aliases a "
+            "JOIN entities e ON e.user_id = a.user_id AND e.id = a.entity_id "
+            "WHERE a.user_id = ?"
+        )
+        params: list[Any] = [user_id]
+        if t_clause:
+            sql += f" AND {t_clause}"
+            params.extend(t_params)
+        sql += " ORDER BY a.alias_norm ASC, a.entity_id ASC"
+
+        result: dict[str, list[str]] = defaultdict(list)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        for alias_norm, entity_id in rows:
+            result[alias_norm].append(entity_id)
+        return dict(result)
+
+    def upsert_edge(self, edge: Edge) -> Edge:
+        _require_non_empty(edge.id, "edge.id")
+        _require_non_empty(edge.user_id, "edge.user_id")
+        _require_non_empty(edge.src_id, "edge.src_id")
+        _require_non_empty(edge.predicate, "edge.predicate")
+        _require_non_empty(edge.dst_id, "edge.dst_id")
+        if edge.origin not in _VALID_EDGE_ORIGINS:
+            raise ValueError(
+                f"invalid edge origin {edge.origin!r}; expected one of {sorted(_VALID_EDGE_ORIGINS)}"
+            )
+
+        t_valid = _normalize_utc(edge.t_valid)
+        recorded_at = _normalize_utc(edge.recorded_at)
+        assert t_valid is not None and recorded_at is not None
+        t_invalid = _normalize_utc(edge.t_invalid)
+        attrs_json = json.dumps(dict(edge.attrs))
+
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """INSERT INTO edges
+                   (id, user_id, src_id, predicate, dst_id, origin, attrs_json,
+                    confidence, event_id, page_commit, t_valid, t_invalid, recorded_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, id) DO UPDATE SET
+                       src_id = excluded.src_id,
+                       predicate = excluded.predicate,
+                       dst_id = excluded.dst_id,
+                       origin = excluded.origin,
+                       attrs_json = excluded.attrs_json,
+                       confidence = excluded.confidence,
+                       event_id = excluded.event_id,
+                       page_commit = excluded.page_commit,
+                       t_valid = excluded.t_valid,
+                       t_invalid = excluded.t_invalid,
+                       recorded_at = edges.recorded_at""",
+                (
+                    edge.id,
+                    edge.user_id,
+                    edge.src_id,
+                    edge.predicate,
+                    edge.dst_id,
+                    edge.origin,
+                    attrs_json,
+                    float(edge.confidence),
+                    edge.event_id,
+                    edge.page_commit,
+                    t_valid.isoformat(),
+                    t_invalid.isoformat() if t_invalid is not None else None,
+                    recorded_at.isoformat(),
+                ),
+            )
+            self._conn.commit()
+            row = cur.execute(
+                "SELECT * FROM edges WHERE user_id = ? AND id = ?",
+                (edge.user_id, edge.id),
+            ).fetchone()
+            cols = [d[0] for d in cur.description]
+            return self._row_to_edge(dict(zip(cols, row, strict=True)))
+
+    def get_edge(self, edge_id: str, *, user_id: str) -> Edge | None:
+        with self._lock:
+            cur = self._conn.cursor()
+            row = cur.execute(
+                "SELECT * FROM edges WHERE user_id = ? AND id = ?",
+                (user_id, edge_id),
+            ).fetchone()
+            if row is None:
+                return None
+            cols = [d[0] for d in cur.description]
+            return self._row_to_edge(dict(zip(cols, row, strict=True)))
+
+    def close_edge(
+        self, edge_id: str, *, user_id: str, t_invalid: datetime
+    ) -> bool:
+        t_iso = _dt_to_utc_iso(t_invalid)
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "UPDATE edges SET t_invalid = ? "
+                "WHERE user_id = ? AND id = ? AND t_invalid IS NULL",
+                (t_iso, user_id, edge_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def list_edges(
+        self,
+        *,
+        user_id: str,
+        entity_id: str | None = None,
+        predicate: str | None = None,
+        direction: str = "both",
+        as_of: datetime | None = None,
+        include_closed: bool = False,
+    ) -> list[Edge]:
+        if direction not in _VALID_DIRECTIONS:
+            raise ValueError(
+                f"invalid direction {direction!r}; expected one of {sorted(_VALID_DIRECTIONS)}"
+            )
+        sql = "SELECT * FROM edges WHERE user_id = ?"
+        params: list[Any] = [user_id]
+        if entity_id is not None:
+            if direction == "out":
+                sql += " AND src_id = ?"
+                params.append(entity_id)
+            elif direction == "in":
+                sql += " AND dst_id = ?"
+                params.append(entity_id)
+            else:
+                sql += " AND (src_id = ? OR dst_id = ?)"
+                params.extend([entity_id, entity_id])
+        if predicate is not None:
+            sql += " AND predicate = ?"
+            params.append(predicate)
+        t_clause, t_params = _temporal_sql("", as_of, include_closed=include_closed)
+        if t_clause:
+            sql += f" AND {t_clause}"
+            params.extend(t_params)
+        sql += " ORDER BY t_valid DESC, id ASC"
+
+        with self._lock:
+            cur = self._conn.cursor()
+            rows = cur.execute(sql, params).fetchall()
+            cols = [d[0] for d in cur.description]
+            return [
+                self._row_to_edge(dict(zip(cols, r, strict=True)))
+                for r in rows
+            ]
+
+    def neighbors(
+        self,
+        entity_id: str,
+        *,
+        user_id: str,
+        predicate: str | None = None,
+        direction: str = "both",
+        depth: int = 1,
+        as_of: datetime | None = None,
+        limit: int = 100,
+    ) -> list[tuple[int, Edge]]:
+        if direction not in _VALID_DIRECTIONS:
+            raise ValueError(
+                f"invalid direction {direction!r}; expected one of {sorted(_VALID_DIRECTIONS)}"
+            )
+        if isinstance(depth, bool) or depth not in (1, 2):
+            raise ValueError(f"invalid depth {depth!r}; expected 1 or 2")
+        if limit <= 0:
+            return []
+
+        if direction == "out":
+            dir_cond = "e.src_id = w.node"
+            next_node = "e.dst_id"
+        elif direction == "in":
+            dir_cond = "e.dst_id = w.node"
+            next_node = "e.src_id"
+        else:
+            dir_cond = "(e.src_id = w.node OR e.dst_id = w.node)"
+            next_node = "CASE WHEN e.src_id = w.node THEN e.dst_id ELSE e.src_id END"
+
+        t_clause, t_params = _temporal_sql("e", as_of, include_closed=False)
+        extra_preds: list[str] = []
+        extra_params: list[Any] = []
+        if predicate is not None:
+            extra_preds.append("e.predicate = ?")
+            extra_params.append(predicate)
+        if t_clause:
+            extra_preds.append(t_clause)
+            extra_params.extend(t_params)
+        extra_sql = "".join(f" AND {cond}" for cond in extra_preds)
+
+        sql = f"""
+            WITH RECURSIVE walk(node, depth, path, edge_id) AS (
+                SELECT ?, 0, '|' || ? || '|', NULL
+                UNION ALL
+                SELECT
+                    {next_node},
+                    w.depth + 1,
+                    w.path || ({next_node}) || '|',
+                    e.id
+                FROM walk w
+                CROSS JOIN edges e
+                  ON e.user_id = ?
+                 AND {dir_cond}
+                WHERE w.depth < ?
+                  {extra_sql}
+                  AND instr(w.path, '|' || ({next_node}) || '|') = 0
+            ),
+            dedup AS (
+                SELECT edge_id, MIN(depth) AS min_depth
+                FROM walk
+                WHERE edge_id IS NOT NULL
+                GROUP BY edge_id
+            )
+            SELECT d.min_depth AS _hop_depth, e.*
+            FROM dedup d
+            JOIN edges e ON e.user_id = ? AND e.id = d.edge_id
+            ORDER BY d.min_depth ASC, e.t_valid DESC, e.id ASC
+            LIMIT ?
+        """
+        params: list[Any] = [
+            entity_id,
+            entity_id,
+            user_id,
+            depth,
+            *extra_params,
+            user_id,
+            limit,
+        ]
+        with self._lock:
+            cur = self._conn.cursor()
+            rows = cur.execute(sql, params).fetchall()
+            cols = [d[0] for d in cur.description]
+            out: list[tuple[int, Edge]] = []
+            for r in rows:
+                row_dict = dict(zip(cols, r, strict=True))
+                hop = int(row_dict.pop("_hop_depth"))
+                out.append((hop, self._row_to_edge(row_dict)))
+            return out
+
+    def add_mentions(self, mentions: Sequence[Mention]) -> int:
+        if not mentions:
+            return 0
+        validated: list[tuple[str, str, str, str]] = []
+        for m in mentions:
+            _require_non_empty(m.memory_id, "mention.memory_id")
+            _require_non_empty(m.entity_id, "mention.entity_id")
+            _require_non_empty(m.user_id, "mention.user_id")
+            if m.method not in _VALID_MENTION_METHODS:
+                raise ValueError(
+                    f"invalid mention method {m.method!r}; expected one of {sorted(_VALID_MENTION_METHODS)}"
+                )
+            validated.append((m.memory_id, m.entity_id, m.user_id, m.method))
+
+        inserted = 0
+        with self._lock:
+            cur = self._conn.cursor()
+            for item in validated:
+                cur.execute(
+                    "INSERT OR IGNORE INTO mentions "
+                    "(memory_id, entity_id, user_id, method) VALUES (?, ?, ?, ?)",
+                    item,
+                )
+                inserted += cur.rowcount
+            self._conn.commit()
+        return inserted
+
+    def mentions_for_entity(
+        self, entity_id: str, *, user_id: str, live_only: bool = True
+    ) -> list[str]:
+        with self._lock:
+            if live_only:
+                rows = self._conn.execute(
+                    "SELECT mn.memory_id "
+                    "FROM mentions mn "
+                    "JOIN memories m ON m.id = mn.memory_id "
+                    "AND m.user_id = mn.user_id "
+                    "AND m.health_state != 'tombstoned' "
+                    "WHERE mn.user_id = ? AND mn.entity_id = ? "
+                    "ORDER BY m.t_valid ASC, mn.memory_id ASC",
+                    (user_id, entity_id),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT memory_id FROM mentions "
+                    "WHERE user_id = ? AND entity_id = ? "
+                    "ORDER BY memory_id ASC",
+                    (user_id, entity_id),
+                ).fetchall()
+        return [r[0] for r in rows]
+
+    def mentions_for_memory(
+        self, memory_id: str, *, user_id: str
+    ) -> list[Mention]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT memory_id, entity_id, user_id, method "
+                "FROM mentions WHERE memory_id = ? AND user_id = ? "
+                "ORDER BY entity_id ASC",
+                (memory_id, user_id),
+            ).fetchall()
+        return [
+            Mention(memory_id=r[0], entity_id=r[1], user_id=r[2], method=r[3])
+            for r in rows
+        ]
+
+    def memories_without_mentions(self, *, user_id: str) -> list[Memory]:
+        with self._lock:
+            cur = self._conn.cursor()
+            rows = cur.execute(
+                "SELECT * FROM memories m "
+                "WHERE m.user_id = ? AND m.health_state != 'tombstoned' "
+                "AND NOT EXISTS ("
+                "    SELECT 1 FROM mentions mn "
+                "    WHERE mn.memory_id = m.id AND mn.user_id = m.user_id"
+                ") "
+                "ORDER BY m.t_valid ASC, m.id ASC",
+                (user_id,),
+            ).fetchall()
+            cols = [d[0] for d in cur.description]
+            return self._rows_to_memories(
+                [dict(zip(cols, r, strict=True)) for r in rows]
+            )
+
+    def add_flag(
+        self,
+        *,
+        user_id: str,
+        target_kind: str,
+        note: str,
+        target_id: str | None = None,
+        source: str | None = None,
+        created_at: datetime | None = None,
+    ) -> Flag:
+        _require_non_empty(user_id, "user_id")
+        if target_kind not in _VALID_FLAG_KINDS:
+            raise ValueError(
+                f"invalid target_kind {target_kind!r}; expected one of {sorted(_VALID_FLAG_KINDS)}"
+            )
+        ts = _normalize_utc(created_at) if created_at is not None else datetime.now(UTC)
+        assert ts is not None
+
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "INSERT INTO flags "
+                "(user_id, target_kind, target_id, note, source, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, target_kind, target_id, note, source, ts.isoformat()),
+            )
+            flag_id = int(cur.lastrowid)
+            self._conn.commit()
+        return Flag(
+            id=flag_id,
+            user_id=user_id,
+            target_kind=target_kind,
+            note=note,
+            created_at=ts,
+            target_id=target_id,
+            source=source,
+            resolved_at=None,
+            resolution=None,
+        )
+
+    def list_flags(
+        self, *, user_id: str, include_resolved: bool = False
+    ) -> list[Flag]:
+        sql = "SELECT * FROM flags WHERE user_id = ?"
+        if not include_resolved:
+            sql += " AND resolved_at IS NULL"
+        sql += " ORDER BY created_at ASC, id ASC"
+        with self._lock:
+            cur = self._conn.cursor()
+            rows = cur.execute(sql, (user_id,)).fetchall()
+            cols = [d[0] for d in cur.description]
+            return [
+                self._row_to_flag(dict(zip(cols, r, strict=True)))
+                for r in rows
+            ]
+
+    def resolve_flag(
+        self,
+        flag_id: int,
+        *,
+        user_id: str,
+        resolution: str,
+        resolved_at: datetime | None = None,
+    ) -> bool:
+        ts = _normalize_utc(resolved_at) if resolved_at is not None else datetime.now(UTC)
+        assert ts is not None
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "UPDATE flags SET resolved_at = ?, resolution = ? "
+                "WHERE id = ? AND user_id = ? AND resolved_at IS NULL",
+                (ts.isoformat(), resolution, flag_id, user_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def graph_stats(self, *, user_id: str) -> GraphStats:
+        with self._lock:
+            cur = self._conn.cursor()
+            entities = cur.execute(
+                "SELECT COUNT(*) FROM entities WHERE user_id = ? AND t_invalid IS NULL",
+                (user_id,),
+            ).fetchone()[0]
+            edges = cur.execute(
+                "SELECT COUNT(*) FROM edges WHERE user_id = ? AND t_invalid IS NULL",
+                (user_id,),
+            ).fetchone()[0]
+            mentions = cur.execute(
+                "SELECT COUNT(*) FROM mentions mn "
+                "JOIN memories m ON m.id = mn.memory_id AND m.user_id = mn.user_id "
+                "WHERE mn.user_id = ? AND m.health_state != 'tombstoned'",
+                (user_id,),
+            ).fetchone()[0]
+            open_flags = cur.execute(
+                "SELECT COUNT(*) FROM flags WHERE user_id = ? AND resolved_at IS NULL",
+                (user_id,),
+            ).fetchone()[0]
+        return GraphStats(
+            entities=int(entities),
+            edges=int(edges),
+            mentions=int(mentions),
+            open_flags=int(open_flags),
+        )
+
+    # ---- graph row hydrators -------------------------------------
+
+    def _load_aliases_by_entity(
+        self, cur: sqlite3.Cursor, user_id: str, entity_ids: Sequence[str]
+    ) -> dict[str, tuple[str, ...]]:
+        ids = list(dict.fromkeys(entity_ids))
+        grouped: dict[str, list[str]] = defaultdict(list)
+        for chunk in _chunks(ids):
+            rows = cur.execute(
+                "SELECT entity_id, alias_norm FROM entity_aliases "
+                f"WHERE user_id = ? AND entity_id IN ({_placeholders(len(chunk))}) "
+                "ORDER BY alias_norm ASC",
+                [user_id, *chunk],
+            ).fetchall()
+            for eid, alias_norm in rows:
+                grouped[eid].append(alias_norm)
+        return {eid: tuple(sorted(aliases)) for eid, aliases in grouped.items()}
+
+    def _rows_to_entities(
+        self, cur: sqlite3.Cursor, user_id: str, rows: list[dict[str, Any]]
+    ) -> list[Entity]:
+        if not rows:
+            return []
+        aliases_map = self._load_aliases_by_entity(
+            cur, user_id, [r["id"] for r in rows]
+        )
+        return [
+            Entity(
+                id=r["id"],
+                user_id=r["user_id"],
+                type=r["type"],
+                name=r["name"],
+                t_valid=_iso_to_dt(r["t_valid"]),  # type: ignore[arg-type]
+                summary=r.get("summary") or "",
+                page_path=r.get("page_path") or "",
+                page_commit=r.get("page_commit"),
+                attrs=json.loads(r.get("attrs_json") or "{}"),
+                aliases=aliases_map.get(r["id"], ()),
+                t_invalid=_iso_to_dt(r.get("t_invalid")),
+            )
+            for r in rows
+        ]
+
+    def _row_to_edge(self, row: dict[str, Any]) -> Edge:
+        return Edge(
+            id=row["id"],
+            user_id=row["user_id"],
+            src_id=row["src_id"],
+            predicate=row["predicate"],
+            dst_id=row["dst_id"],
+            origin=row["origin"],
+            t_valid=_iso_to_dt(row["t_valid"]),  # type: ignore[arg-type]
+            recorded_at=_iso_to_dt(row["recorded_at"]),  # type: ignore[arg-type]
+            attrs=json.loads(row.get("attrs_json") or "{}"),
+            confidence=float(row.get("confidence", 0.5)),
+            event_id=row.get("event_id"),
+            page_commit=row.get("page_commit"),
+            t_invalid=_iso_to_dt(row.get("t_invalid")),
+        )
+
+    def _row_to_flag(self, row: dict[str, Any]) -> Flag:
+        return Flag(
+            id=int(row["id"]),
+            user_id=row["user_id"],
+            target_kind=row["target_kind"],
+            note=row["note"],
+            created_at=_iso_to_dt(row["created_at"]),  # type: ignore[arg-type]
+            target_id=row.get("target_id"),
+            source=row.get("source"),
+            resolved_at=_iso_to_dt(row.get("resolved_at")),
+            resolution=row.get("resolution"),
         )

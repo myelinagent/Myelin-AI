@@ -13,8 +13,13 @@ from typing import Any
 __all__ = [
     "ApoptosisReport",
     "ConsolidationReport",
+    "Edge",
+    "Entity",
     "Event",
+    "Flag",
+    "GraphStats",
     "Memory",
+    "Mention",
     "ObservedTurn",
     "SearchResult",
     "SearchTelemetry",
@@ -258,3 +263,79 @@ class SearchTelemetry:
         if denom == 0:
             return 0.0
         return self.n_calls_with_working_hit / denom
+
+
+# ---------------------------------------------------------------------
+# Knowledge-graph substrate types
+# ---------------------------------------------------------------------
+
+
+@dataclass
+class Entity:
+    """Canonical node in the user's knowledge graph."""
+
+    id: str
+    user_id: str
+    type: str
+    name: str
+    t_valid: datetime
+    summary: str = ""
+    page_path: str = ""
+    page_commit: str | None = None
+    attrs: dict[str, Any] = field(default_factory=dict)
+    aliases: tuple[str, ...] = ()
+    t_invalid: datetime | None = None
+
+
+@dataclass
+class Edge:
+    """Bi-temporal directed relationship between two entities."""
+
+    id: str
+    user_id: str
+    src_id: str
+    predicate: str
+    dst_id: str
+    origin: str
+    t_valid: datetime
+    recorded_at: datetime
+    attrs: dict[str, Any] = field(default_factory=dict)
+    confidence: float = 0.5
+    event_id: str | None = None
+    page_commit: str | None = None
+    t_invalid: datetime | None = None
+
+
+@dataclass
+class Mention:
+    """Provenance link between a Memory and a mentioned Entity."""
+
+    memory_id: str
+    entity_id: str
+    user_id: str
+    method: str
+
+
+@dataclass
+class Flag:
+    """Audit or curation flag on a graph element or missing fact."""
+
+    id: int
+    user_id: str
+    target_kind: str
+    note: str
+    created_at: datetime
+    target_id: str | None = None
+    source: str | None = None
+    resolved_at: datetime | None = None
+    resolution: str | None = None
+
+
+@dataclass(frozen=True)
+class GraphStats:
+    """Summary counts of a user's knowledge-graph substrate."""
+
+    entities: int = 0
+    edges: int = 0
+    mentions: int = 0
+    open_flags: int = 0

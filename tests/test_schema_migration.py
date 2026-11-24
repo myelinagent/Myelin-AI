@@ -152,3 +152,189 @@ def test_cite_events_outlive_memory():
         assert n == 5, "cite_events must outlive the memory for audit"
     finally:
         backend.close()
+
+
+def test_v160_substrate_migrates_clean_to_graph_tables(tmp_path):
+    """Open a genuine 1.6.0-shaped database (v1 + v1.2 + vectors + FTS5,
+    without any graph tables) and verify additive migration."""
+    db_path = str(tmp_path / "v160.sqlite")
+    conn = sqlite3.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE memories (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            metadata_json TEXT NOT NULL,
+            event_id TEXT,
+            t_valid TEXT NOT NULL,
+            t_invalid TEXT,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            importance REAL NOT NULL DEFAULT 0.5,
+            health_state TEXT NOT NULL DEFAULT 'healthy',
+            quarantine_entered_at TEXT,
+            cite_correct_count INTEGER NOT NULL DEFAULT 0,
+            cite_incorrect_count INTEGER NOT NULL DEFAULT 0,
+            last_cited_at TEXT,
+            shown_unused_count INTEGER NOT NULL DEFAULT 0,
+            related_support REAL NOT NULL DEFAULT 0,
+            index_text TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX idx_memories_user_state ON memories(user_id, health_state);
+        CREATE INDEX idx_memories_user_tvalid ON memories(user_id, t_valid);
+
+        CREATE TABLE tombstones (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            metadata_json TEXT NOT NULL,
+            event_id TEXT,
+            t_valid TEXT NOT NULL,
+            t_invalid TEXT,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            importance REAL NOT NULL DEFAULT 0.5,
+            health_state TEXT NOT NULL DEFAULT 'tombstoned',
+            quarantine_entered_at TEXT,
+            tombstoned_at TEXT NOT NULL,
+            cite_correct_count INTEGER NOT NULL DEFAULT 0,
+            cite_incorrect_count INTEGER NOT NULL DEFAULT 0,
+            last_cited_at TEXT
+        );
+
+        CREATE TABLE events (
+            event_id TEXT PRIMARY KEY,
+            type TEXT NOT NULL DEFAULT '',
+            anchor_datetime TEXT,
+            location TEXT NOT NULL DEFAULT '',
+            participant_ids TEXT NOT NULL DEFAULT '[]',
+            evidence_turn_ids TEXT NOT NULL DEFAULT '[]'
+        );
+
+        CREATE TABLE cite_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_id TEXT NOT NULL,
+            answer_correct INTEGER NOT NULL CHECK (answer_correct IN (0, 1)),
+            session_id TEXT,
+            query_hash_or_text TEXT,
+            cited_at TEXT NOT NULL
+        );
+
+        CREATE TABLE abstain_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            query_hash_or_text TEXT,
+            session_id TEXT,
+            recorded_at TEXT NOT NULL
+        );
+
+        CREATE TABLE memory_vectors (
+            memory_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            vector BLOB NOT NULL
+        );
+
+        CREATE VIRTUAL TABLE memories_fts USING fts5(
+            content,
+            user_id UNINDEXED,
+            tokenize = 'porter unicode61'
+        );
+        CREATE TABLE memories_fts_rows (
+            memory_id TEXT PRIMARY KEY,
+            fts_rowid INTEGER NOT NULL UNIQUE
+        );
+    """)
+
+    conn.execute(
+        "INSERT INTO events VALUES ('ev-1', 'meeting', '2026-01-10T10:00:00+00:00', 'HQ', '[]', '[]')"
+    )
+    conn.execute(
+        "INSERT INTO memories (id, user_id, content, metadata_json, event_id, t_valid, index_text) "
+        "VALUES ('m-1', 'alice', 'Alice likes green tea.', ?, 'ev-1', '2026-01-10T10:00:00+00:00', 'beverage')",
+        ('{"k": 1}',),
+    )
+    conn.execute(
+        "INSERT INTO memories (id, user_id, content, metadata_json, event_id, t_valid) "
+        "VALUES ('m-2', 'alice', 'Alice lives in Austin.', '{}', NULL, '2026-01-11T10:00:00+00:00')"
+    )
+    conn.execute(
+        "INSERT INTO memories_fts (rowid, content, user_id) "
+        "SELECT rowid, content || char(10) || index_text, user_id FROM memories"
+    )
+    conn.execute(
+        "INSERT INTO memories_fts_rows (memory_id, fts_rowid) SELECT id, rowid FROM memories"
+    )
+    conn.execute(
+        "INSERT INTO memory_vectors VALUES ('m-1', 'alice', X'0000803F00000000')"
+    )
+    conn.execute(
+        "INSERT INTO tombstones (id, user_id, content, metadata_json, t_valid, tombstoned_at) "
+        "VALUES ('m-old', 'alice', 'Old fact', '{}', '2025-01-01T00:00:00+00:00', '2025-12-01T00:00:00+00:00')"
+    )
+    conn.execute(
+        "INSERT INTO cite_events (memory_id, answer_correct, session_id, query_hash_or_text, cited_at) "
+        "VALUES ('m-1', 1, 's1', 'tea?', '2026-01-12T00:00:00+00:00')"
+    )
+    conn.execute(
+        "INSERT INTO abstain_events (query_hash_or_text, session_id, recorded_at) "
+        "VALUES ('unknown?', 's1', '2026-01-12T00:00:00+00:00')"
+    )
+    pre_mem_cols = [r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()]
+    pre_tomb_cols = [r[1] for r in conn.execute("PRAGMA table_info(tombstones)").fetchall()]
+    pre_tables = {
+        r[0]
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }
+    for graph_table in ("entities", "entity_aliases", "edges", "mentions", "flags"):
+        assert graph_table not in pre_tables
+    conn.commit()
+    conn.close()
+
+    backend = SqliteBackend(db_path=db_path)
+    try:
+        cur = backend._conn.cursor()  # noqa: SLF001
+        tables = {
+            r[0]
+            for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        for graph_table in ("entities", "entity_aliases", "edges", "mentions", "flags"):
+            assert graph_table in tables
+
+        indexes = {
+            r[0]
+            for r in cur.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+        }
+        for graph_index in (
+            "idx_entities_user_type",
+            "idx_entity_aliases_entity",
+            "idx_edges_src",
+            "idx_edges_dst",
+            "idx_mentions_entity",
+            "idx_flags_user_open",
+        ):
+            assert graph_index in indexes
+
+        post_mem_cols = [r[1] for r in cur.execute("PRAGMA table_info(memories)").fetchall()]
+        post_tomb_cols = [r[1] for r in cur.execute("PRAGMA table_info(tombstones)").fetchall()]
+        assert post_mem_cols == pre_mem_cols
+        assert post_tomb_cols == pre_tomb_cols
+
+        assert cur.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 2
+        assert cur.execute("SELECT COUNT(*) FROM tombstones").fetchone()[0] == 1
+        assert cur.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
+        assert cur.execute("SELECT COUNT(*) FROM cite_events").fetchone()[0] == 1
+        assert cur.execute("SELECT COUNT(*) FROM abstain_events").fetchone()[0] == 1
+        assert cur.execute("SELECT COUNT(*) FROM memory_vectors").fetchone()[0] == 1
+
+        fetched = backend.get("m-1")
+        assert fetched is not None
+        assert fetched.content == "Alice likes green tea."
+        assert fetched.event is not None and fetched.event.event_id == "ev-1"
+        hits = backend.search(query="green tea", user_id="alice")
+        assert [h.memory.id for h in hits] == ["m-1"]
+
+        # Running migrations twice more must be strictly idempotent.
+        backend._apply_migrations()  # noqa: SLF001
+        backend._apply_migrations()  # noqa: SLF001
+        assert [r[1] for r in cur.execute("PRAGMA table_info(memories)").fetchall()] == pre_mem_cols
+        assert cur.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 2
+        assert cur.execute("SELECT COUNT(*) FROM cite_events").fetchone()[0] == 1
+    finally:
+        backend.close()
