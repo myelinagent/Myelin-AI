@@ -12,10 +12,20 @@ backends should wrap their async I/O at the boundary.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
-from myelin.types import Event, Memory, SearchResult
+from myelin.types import (
+    Edge,
+    Entity,
+    Event,
+    Flag,
+    GraphStats,
+    Memory,
+    Mention,
+    SearchResult,
+)
 
 
 class Backend(Protocol):
@@ -134,4 +144,126 @@ class Backend(Protocol):
         """Record one ``abstain`` event — a search that returned zero
         results (deliberate abstention). FR-A6.
         """
+        ...
+
+
+@runtime_checkable
+class GraphBackend(Protocol):
+    """Optional knowledge-graph storage contract implemented by backends."""
+
+    def upsert_entity(
+        self, entity: Entity, *, aliases: Sequence[str] | None = None
+    ) -> Entity:
+        ...
+
+    def get_entity(
+        self, entity_id: str, *, user_id: str, as_of: datetime | None = None
+    ) -> Entity | None:
+        ...
+
+    def find_entities(
+        self, query: str, *, user_id: str, as_of: datetime | None = None
+    ) -> list[Entity]:
+        ...
+
+    def list_entities(
+        self,
+        *,
+        user_id: str,
+        entity_type: str | None = None,
+        as_of: datetime | None = None,
+        include_closed: bool = False,
+    ) -> list[Entity]:
+        ...
+
+    def close_entity(
+        self, entity_id: str, *, user_id: str, t_invalid: datetime
+    ) -> bool:
+        ...
+
+    def alias_map(
+        self, *, user_id: str, as_of: datetime | None = None
+    ) -> dict[str, list[str]]:
+        ...
+
+    def upsert_edge(self, edge: Edge) -> Edge:
+        ...
+
+    def get_edge(self, edge_id: str, *, user_id: str) -> Edge | None:
+        ...
+
+    def close_edge(
+        self, edge_id: str, *, user_id: str, t_invalid: datetime
+    ) -> bool:
+        ...
+
+    def list_edges(
+        self,
+        *,
+        user_id: str,
+        entity_id: str | None = None,
+        predicate: str | None = None,
+        direction: str = "both",
+        as_of: datetime | None = None,
+        include_closed: bool = False,
+    ) -> list[Edge]:
+        ...
+
+    def neighbors(
+        self,
+        entity_id: str,
+        *,
+        user_id: str,
+        predicate: str | None = None,
+        direction: str = "both",
+        depth: int = 1,
+        as_of: datetime | None = None,
+        limit: int = 100,
+    ) -> list[tuple[int, Edge]]:
+        ...
+
+    def add_mentions(self, mentions: Sequence[Mention]) -> int:
+        ...
+
+    def mentions_for_entity(
+        self, entity_id: str, *, user_id: str, live_only: bool = True
+    ) -> list[str]:
+        ...
+
+    def mentions_for_memory(
+        self, memory_id: str, *, user_id: str
+    ) -> list[Mention]:
+        ...
+
+    def memories_without_mentions(self, *, user_id: str) -> list[Memory]:
+        ...
+
+    def add_flag(
+        self,
+        *,
+        user_id: str,
+        target_kind: str,
+        note: str,
+        target_id: str | None = None,
+        source: str | None = None,
+        created_at: datetime | None = None,
+    ) -> Flag:
+        ...
+
+    def list_flags(
+        self, *, user_id: str, include_resolved: bool = False
+    ) -> list[Flag]:
+        ...
+
+    def resolve_flag(
+        self,
+        flag_id: int,
+        *,
+        user_id: str,
+        resolution: str,
+        resolved_at: datetime | None = None,
+    ) -> bool:
+        ...
+
+    def graph_stats(self, *, user_id: str) -> GraphStats:
         ...
